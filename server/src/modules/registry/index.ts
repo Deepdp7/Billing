@@ -1,0 +1,164 @@
+import { BusinessCategory } from '../../types/index.js';
+
+export interface ModuleDefinition {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  route: string;
+  requiredPlan: 'FREE' | 'PRO' | 'BUSINESS';
+  isCore: boolean;
+  extraProductFields?: Array<{
+    name: string;
+    label: string;
+    type: 'text' | 'number' | 'date' | 'select';
+    options?: string[];
+  }>;
+}
+
+export const SYSTEM_MODULES: Record<string, ModuleDefinition> = {
+  pos_billing: {
+    id: 'pos_billing',
+    name: 'POS Billing',
+    description: 'High-speed billing with barcode scanning, GST calculations & thermal printing',
+    icon: 'Receipt',
+    route: '/billing',
+    requiredPlan: 'FREE',
+    isCore: true,
+  },
+  products: {
+    id: 'products',
+    name: 'Product Catalog',
+    description: 'Inventory SKUs, HSN codes, GST tax rates, units and pricing',
+    icon: 'Package',
+    route: '/products',
+    requiredPlan: 'FREE',
+    isCore: true,
+  },
+  inventory: {
+    id: 'inventory',
+    name: 'Stock & Inventory',
+    description: 'Real-time stock tracking, manual adjustments and low-stock alerts',
+    icon: 'Warehouse',
+    route: '/inventory',
+    requiredPlan: 'FREE',
+    isCore: true,
+  },
+  customers: {
+    id: 'customers',
+    name: 'Customers & CRM',
+    description: 'Customer profiles, GSTIN, credit limits and outstanding ledgers',
+    icon: 'Users',
+    route: '/customers',
+    requiredPlan: 'FREE',
+    isCore: true,
+  },
+  invoices: {
+    id: 'invoices',
+    name: 'Invoice History',
+    description: 'Sales invoices, print preview, PDF download and status tracking',
+    icon: 'FileText',
+    route: '/invoices',
+    requiredPlan: 'FREE',
+    isCore: true,
+  },
+  restaurant_tables: {
+    id: 'restaurant_tables',
+    name: 'Table & KOT',
+    description: 'Dine-in tables, Kitchen Order Tickets and takeaway management',
+    icon: 'UtensilsCrossed',
+    route: '/restaurant',
+    requiredPlan: 'PRO',
+    isCore: false,
+  },
+  pharmacy_batch: {
+    id: 'pharmacy_batch',
+    name: 'Batches & Expiry',
+    description: 'Medicine batches, manufacturing/expiry dates and drug schedules',
+    icon: 'Pill',
+    route: '/pharmacy',
+    requiredPlan: 'PRO',
+    isCore: false,
+    extraProductFields: [
+      { name: 'batch_no', label: 'Batch No.', type: 'text' },
+      { name: 'expiry_date', label: 'Expiry Date', type: 'date' },
+      { name: 'composition', label: 'Drug Composition', type: 'text' },
+    ],
+  },
+  clothing_variants: {
+    id: 'clothing_variants',
+    name: 'Sizes & Colors',
+    description: 'Apparel matrix, size/color variant stock tracking and exchanges',
+    icon: 'Shirt',
+    route: '/fashion',
+    requiredPlan: 'PRO',
+    isCore: false,
+    extraProductFields: [
+      { name: 'size', label: 'Size', type: 'select', options: ['XS', 'S', 'M', 'L', 'XL', 'XXL', 'Free Size'] },
+      { name: 'color', label: 'Color', type: 'text' },
+      { name: 'fabric', label: 'Fabric / Material', type: 'text' },
+    ],
+  },
+};
+
+export const CATEGORY_DEFAULT_MODULES: Record<BusinessCategory, string[]> = {
+  GROCERY: ['pos_billing', 'products', 'inventory', 'customers', 'invoices'],
+  RESTAURANT: ['pos_billing', 'restaurant_tables', 'products', 'inventory', 'customers', 'invoices'],
+  PHARMACY: ['pos_billing', 'pharmacy_batch', 'products', 'inventory', 'customers', 'invoices'],
+  CLOTHING: ['pos_billing', 'clothing_variants', 'products', 'inventory', 'customers', 'invoices'],
+  WHOLESALE: ['pos_billing', 'products', 'inventory', 'customers', 'invoices'],
+  SERVICE: ['pos_billing', 'products', 'customers', 'invoices'],
+  MANUFACTURING: ['pos_billing', 'products', 'inventory', 'customers', 'invoices'],
+  SCHOOL: ['pos_billing', 'customers', 'invoices'],
+};
+
+export const CATEGORY_METADATA: Record<BusinessCategory, { label: string; icon: string; description: string; sampleProduct: string }> = {
+  GROCERY: {
+    label: 'Grocery & Supermarket',
+    icon: 'ShoppingBag',
+    description: 'Fast barcode checkout, weighing scale support & loose item sales',
+    sampleProduct: 'Aashirvaad Atta 5kg',
+  },
+  RESTAURANT: {
+    label: 'Restaurant & Cafe',
+    icon: 'UtensilsCrossed',
+    description: 'Table management, KOT, quick takeaway, dining bills',
+    sampleProduct: 'Paneer Butter Masala',
+  },
+  PHARMACY: {
+    label: 'Pharmacy & Medical',
+    icon: 'Pill',
+    description: 'Batch tracking, expiry warnings, medicine salt/composition lookup',
+    sampleProduct: 'Paracetamol 650mg Strip',
+  },
+  CLOTHING: {
+    label: 'Clothing & Fashion',
+    icon: 'Shirt',
+    description: 'Variant matrices (Size/Color), barcode tags and seasonal stock',
+    sampleProduct: 'Slim Fit Cotton Shirt (Blue - L)',
+  },
+  WHOLESALE: {
+    label: 'Wholesale & Distribution',
+    icon: 'Truck',
+    description: 'Tiered wholesale pricing, customer credit limits and bulk shipments',
+    sampleProduct: 'Industrial Packaging Box (Pack of 50)',
+  },
+  SERVICE: {
+    label: 'Service & Repair Center',
+    icon: 'Wrench',
+    description: 'Service job sheets, labor billing, appointments & quotations',
+    sampleProduct: 'AC Deep Cleaning & Gas Refill',
+  },
+  MANUFACTURING: {
+    label: 'Small Scale Manufacturing',
+    icon: 'Factory',
+    description: 'Raw materials, Bill of Materials (BOM) & finished goods inventory',
+    sampleProduct: 'Assembled LED Floodlight 50W',
+  },
+  SCHOOL: {
+    label: 'School & Institute',
+    icon: 'GraduationCap',
+    description: 'Fee collection, term installments, student ledgers & receipts',
+    sampleProduct: 'Term 1 Tuition Fee',
+  },
+};
