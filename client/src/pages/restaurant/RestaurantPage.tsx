@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { UtensilsCrossed, Plus, Clock, Check, Users, ChefHat, X } from 'lucide-react';
+import { showAlert } from '../../components/ui/dialogs.js';
 
 export const RestaurantPage: React.FC = () => {
   const [tables, setTables] = useState<any[]>([]);
@@ -34,7 +35,7 @@ export const RestaurantPage: React.FC = () => {
       await api.updateTableStatus(id, next);
       loadRestaurantData();
     } catch (err: any) {
-      alert(err.message || 'Failed to update table');
+      showAlert(err.message || 'Failed to update table');
     }
   };
 
@@ -45,7 +46,7 @@ export const RestaurantPage: React.FC = () => {
       await api.updateKotStatus(id, next);
       loadRestaurantData();
     } catch (err: any) {
-      alert(err.message || 'Failed to update KOT');
+      showAlert(err.message || 'Failed to update KOT');
     }
   };
 
@@ -58,7 +59,7 @@ export const RestaurantPage: React.FC = () => {
       setTableNum('');
       loadRestaurantData();
     } catch (err: any) {
-      alert(err.message || 'Failed to add table');
+      showAlert(err.message || 'Failed to add table');
     }
   };
 

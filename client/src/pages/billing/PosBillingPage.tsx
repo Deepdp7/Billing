@@ -3,11 +3,13 @@ import { api } from '../../lib/api.js';
 import { Product, Customer, CartItem, PaymentMode, Invoice } from '../../types/index.js';
 import { formatINR, paiseToRupees, rupeesToPaise } from '../../lib/utils.js';
 import { InvoiceModal } from '../../components/billing/InvoiceModal.js';
+import { calculateInvoice } from '../../lib/invoiceCalc.js';
 import { 
   Search, Barcode, Trash2, Plus, Minus, CreditCard, 
   Banknote, QrCode, PauseCircle, PlayCircle, Check, 
   AlertCircle, Sparkles, UserPlus 
 } from 'lucide-react';
+import { Select } from '../../components/ui/Select.js';
 
 export const PosBillingPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -27,8 +29,17 @@ export const PosBillingPage: React.FC = () => {
   const [customerName, setCustomerName] = useState<string>('Walk-in Customer');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   
-  // Held Bills
-  const [heldBills, setHeldBills] = useState<Array<{ id: string; time: string; cart: CartItem[]; customerName: string }>>([]);
+  // Held Bills (persisted on the local server so they survive restarts)
+  const [heldBills, setHeldBills] = useState<Array<{ id: string; time: string; cart: CartItem[]; customerName: string; payload: any }>>([]);
+
+  // Payment details: amount paid now (blank = full), optional split across two modes
+  const [amountPaidRupees, setAmountPaidRupees] = useState<string>('');
+  const [splitEnabled, setSplitEnabled] = useState(false);
+  const [splitMode, setSplitMode] = useState<PaymentMode>('UPI');
+  const [splitRupees, setSplitRupees] = useState<string>('');
+  const [settings, setSettings] = useState<{ roundOffEnabled: boolean; pricesIncludeTaxDefault: boolean } | null>(null);
+  // Idempotency key: a retried or double-clicked checkout never creates two invoices.
+  const requestIdRef = useRef<string>(crypto.randomUUID());
   
   // Invoicing & Modal
   const [createdInvoice, setCreatedInvoice] = useState<Invoice | null>(null);
@@ -41,7 +52,24 @@ export const PosBillingPage: React.FC = () => {
   useEffect(() => {
     loadCatalog();
     loadCustomers();
+    loadHeldBills();
+    api.getBusinessSettings().then((r) => setSettings(r.settings)).catch(() => undefined);
   }, []);
+
+  const loadHeldBills = async () => {
+    try {
+      const res = await api.getHeldBills();
+      setHeldBills(res.data.map((b: any) => ({
+        id: b.id,
+        time: new Date(b.created_at + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        cart: b.payload.cart || [],
+        customerName: b.customer_name || 'Walk-in',
+        payload: b.payload,
+      })));
+    } catch (err) {
+      console.error('Failed to load held bills', err);
+    }
+  };
 
   const loadCatalog = async () => {
     try {
@@ -134,45 +162,85 @@ export const PosBillingPage: React.FC = () => {
     setCart((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const pickCustomer = (id: string) => {
+    setSelectedCustomerId(id);
+    if (!id) {
+      setCustomerName('Walk-in Customer');
+      setCustomerPhone('');
+      return;
+    }
+    const match = customers.find((c) => c.id === id);
+    if (!match) return;
+    setCustomerName(match.name);
+    setCustomerPhone(match.phone || '');
+  };
+
   const clearCart = () => {
     setCart([]);
     setBillDiscountRupees('0');
+    setAmountPaidRupees('');
+    setSplitEnabled(false);
+    setSplitRupees('');
   };
 
   // Hold Bill
-  const holdBill = () => {
+  const holdBill = async () => {
     if (cart.length === 0) return;
-    const newHold = {
-      id: String(Date.now()),
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      cart: [...cart],
-      customerName: customerName || 'Walk-in',
-    };
-    setHeldBills((prev) => [...prev, newHold]);
-    clearCart();
+    try {
+      await api.holdBill({
+        customerName: customerName || 'Walk-in',
+        payload: { cart, customerName, customerPhone, selectedCustomerId, billDiscountRupees },
+      });
+      clearCart();
+      loadHeldBills();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Could not hold bill');
+    }
   };
 
   // Resume Bill
-  const resumeBill = (holdId: string) => {
+  const resumeBill = async (holdId: string) => {
     const itemToResume = heldBills.find((b) => b.id === holdId);
     if (!itemToResume) return;
+    const p = itemToResume.payload || {};
     setCart(itemToResume.cart);
-    setCustomerName(itemToResume.customerName);
-    setHeldBills((prev) => prev.filter((b) => b.id !== holdId));
+    setCustomerName(p.customerName || itemToResume.customerName);
+    setCustomerPhone(p.customerPhone || '');
+    setSelectedCustomerId(p.selectedCustomerId || '');
+    setBillDiscountRupees(p.billDiscountRupees || '0');
+    try {
+      await api.deleteHeldBill(holdId);
+    } finally {
+      loadHeldBills();
+    }
   };
 
-  // Calculations
-  const subtotalPaise = cart.reduce((acc, it) => acc + (it.unitPricePaise * it.quantity), 0);
-  const totalItemDiscountsPaise = cart.reduce((acc, it) => acc + it.discountPaise, 0);
+  // Calculations — same calculator as the server, so the preview equals the saved invoice.
+  const subtotalPaise = cart.reduce((acc, it) => acc + Math.round(it.unitPricePaise * it.quantity), 0);
   const billDiscountPaise = rupeesToPaise(parseFloat(billDiscountRupees) || 0);
-  const totalDiscountPaise = totalItemDiscountsPaise + billDiscountPaise;
+  let calc: ReturnType<typeof calculateInvoice> | null = null;
+  let calcError = '';
+  if (cart.length > 0) {
+    try {
+      calc = calculateInvoice(
+        cart.map((it) => ({ quantity: it.quantity, unitPricePaise: it.unitPricePaise, discountPaise: it.discountPaise, taxRate: it.taxRate })),
+        { billDiscountPaise, roundOff: settings?.roundOffEnabled ?? true, pricesIncludeTax: settings?.pricesIncludeTaxDefault ?? false },
+      );
+    } catch (err: any) {
+      calcError = err.message;
+    }
+  }
+  const totalTaxPaise = calc?.taxPaise ?? 0;
+  const roundOffPaise = calc?.roundOffPaise ?? 0;
+  const grandTotalPaise = calc?.totalPaise ?? 0;
 
-  const totalTaxPaise = cart.reduce((acc, it) => {
-    const taxable = Math.max(0, (it.unitPricePaise * it.quantity) - it.discountPaise);
-    return acc + Math.round((taxable * it.taxRate) / 100);
-  }, 0);
-
-  const grandTotalPaise = Math.max(0, (subtotalPaise - totalDiscountPaise) + totalTaxPaise);
+  // Payment preview
+  const enteredPaidPaise = amountPaidRupees.trim() === '' ? null : rupeesToPaise(parseFloat(amountPaidRupees) || 0);
+  const splitPaise = splitEnabled ? rupeesToPaise(parseFloat(splitRupees) || 0) : 0;
+  const primaryPaise = paymentMode === 'CREDIT' ? 0 : (enteredPaidPaise ?? Math.max(0, grandTotalPaise - splitPaise));
+  const tenderedPaise = primaryPaise + splitPaise;
+  const changeDuePaise = paymentMode === 'CASH' ? Math.max(0, tenderedPaise - grandTotalPaise) : 0;
+  const balanceDuePaise = Math.max(0, grandTotalPaise - tenderedPaise);
 
   // Checkout Save
   const handleCheckout = async () => {
@@ -196,14 +264,22 @@ export const PosBillingPage: React.FC = () => {
           taxRate: it.taxRate,
         })),
         billDiscountPaise,
-        paymentMode,
-        amountPaidPaise: grandTotalPaise,
+        clientRequestId: requestIdRef.current,
+        // Cash tendered above the bill total is change, not payment.
+        payments: [
+          ...(paymentMode !== 'CREDIT' && primaryPaise - changeDuePaise > 0 ? [{ mode: paymentMode, amountPaise: primaryPaise - changeDuePaise }] : []),
+          ...(splitEnabled && splitPaise > 0 ? [{ mode: splitMode, amountPaise: splitPaise }] : []),
+        ],
+        paymentMode: paymentMode === 'CREDIT' && !(splitEnabled && splitPaise > 0) ? 'CREDIT' : undefined,
       };
+      if (payload.payments.length === 0) delete (payload as any).payments;
 
       const res = await api.checkout(payload);
       setCreatedInvoice(res.invoice);
+      requestIdRef.current = crypto.randomUUID();
       clearCart();
       loadCatalog(); // Refresh stock
+      loadCustomers(); // Refresh balances
     } catch (err: any) {
       setErrorMsg(err.message || 'Checkout failed');
     } finally {
@@ -223,13 +299,13 @@ export const PosBillingPage: React.FC = () => {
   });
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col lg:flex-row overflow-hidden bg-slate-100 dark:bg-slate-950">
+    <div className="h-full min-h-0 flex flex-col lg:flex-row overflow-hidden bg-slate-100 dark:bg-slate-950">
       
       {/* ================= LEFT: PRODUCT CATALOG & SCANNER ================= */}
-      <div className="flex-1 flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 overflow-hidden">
         
         {/* Top Search & Barcode Bar */}
-        <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2.5 bg-slate-50/70 dark:bg-slate-900/70">
+        <div className="shrink-0 p-3.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2.5 bg-slate-50/70 dark:bg-slate-900/70">
           {/* Barcode scanner quick form */}
           <form onSubmit={handleBarcodeSubmit} className="flex-1 min-w-[200px] relative">
             <Barcode className="w-4 h-4 text-emerald-500 absolute left-3 top-2.5" />
@@ -272,7 +348,7 @@ export const PosBillingPage: React.FC = () => {
         </div>
 
         {/* Category Pills */}
-        <div className="px-3.5 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto text-xs no-scrollbar bg-slate-50 dark:bg-slate-900/40">
+        <div className="shrink-0 px-3.5 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto text-xs no-scrollbar bg-slate-50 dark:bg-slate-900/40">
           <button
             onClick={() => setSelectedCategory('all')}
             className={`px-3 py-1 rounded-lg font-medium whitespace-nowrap transition ${
@@ -299,7 +375,21 @@ export const PosBillingPage: React.FC = () => {
         </div>
 
         {/* Catalog Grid */}
-        <div className="flex-1 overflow-y-auto p-3.5 grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 content-start">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3.5">
+          {filteredProducts.length === 0 ? (
+            <div className="h-full min-h-[12rem] flex flex-col items-center justify-center text-center text-slate-400 px-6">
+              <Search className="w-8 h-8 text-slate-300 dark:text-slate-600 mb-2" />
+              <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                {products.length === 0 ? 'No products in the catalog' : 'No products match this search'}
+              </p>
+              <p className="text-xs mt-1 max-w-sm">
+                {products.length === 0
+                  ? 'Add products from the Products page, then scan a barcode or tap an item here.'
+                  : 'Try another name, SKU, barcode, or category.'}
+              </p>
+            </div>
+          ) : (
+          <div className="grid grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 content-start">
           {filteredProducts.map((p) => {
             const isOutOfStock = p.stock_quantity <= 0;
             const isLowStock = p.stock_quantity <= p.low_stock_threshold;
@@ -308,7 +398,7 @@ export const PosBillingPage: React.FC = () => {
                 key={p.id}
                 onClick={() => addToCart(p)}
                 disabled={isOutOfStock}
-                className="text-left p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/60 hover:border-emerald-500 hover:shadow-md transition group flex flex-col justify-between h-32 relative disabled:opacity-50 disabled:cursor-not-allowed"
+                className="text-left p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/60 hover:border-emerald-500 hover:shadow-md transition group flex flex-col gap-2 min-h-[8.5rem] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <div>
                   <div className="flex items-start justify-between gap-1">
@@ -324,8 +414,8 @@ export const PosBillingPage: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="flex items-end justify-between mt-2 pt-2 border-t border-slate-100 dark:border-slate-700/60 w-full">
-                  <div>
+                <div className="flex items-end justify-between gap-2 mt-auto pt-2 border-t border-slate-100 dark:border-slate-700/60 w-full">
+                  <div className="min-w-0">
                     <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
                       {formatINR(p.sale_price_paise)}
                     </span>
@@ -337,7 +427,7 @@ export const PosBillingPage: React.FC = () => {
                   </div>
 
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${
                       isOutOfStock
                         ? 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
                         : isLowStock
@@ -351,14 +441,16 @@ export const PosBillingPage: React.FC = () => {
               </button>
             );
           })}
+          </div>
+          )}
         </div>
       </div>
 
       {/* ================= RIGHT: LIVE CART & BILLING SUMMARY ================= */}
-      <div className="w-full lg:w-96 flex flex-col bg-white dark:bg-slate-900 shadow-xl border-l border-slate-200 dark:border-slate-800">
+      <div className="w-full lg:w-96 shrink-0 min-h-0 max-lg:max-h-[48%] flex flex-col overflow-hidden bg-white dark:bg-slate-900 shadow-xl border-t lg:border-t-0 lg:border-l border-slate-200 dark:border-slate-800">
         
         {/* Customer Header */}
-        <div className="p-3.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 space-y-2">
+        <div className="shrink-0 p-3.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               Customer Details
@@ -374,6 +466,19 @@ export const PosBillingPage: React.FC = () => {
               Reset Walk-in
             </button>
           </div>
+
+          <Select
+            value={selectedCustomerId}
+            onChange={(e) => pickCustomer(e.target.value)}
+            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-100"
+          >
+            <option value="">Walk-in / new customer</option>
+            {customers.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}{c.phone ? ` · ${c.phone}` : ''}
+              </option>
+            ))}
+          </Select>
 
           <div className="grid grid-cols-2 gap-2">
             <input
@@ -394,7 +499,7 @@ export const PosBillingPage: React.FC = () => {
         </div>
 
         {/* Cart Items List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
           {cart.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
               <Sparkles className="w-8 h-8 text-slate-300 dark:text-slate-600 mb-2" />
@@ -435,10 +540,11 @@ export const PosBillingPage: React.FC = () => {
                     </button>
                     <input
                       type="number"
-                      min="1"
+                      min="0.001"
                       value={item.quantity}
-                      onChange={(e) => updateQuantity(idx, parseInt(e.target.value) || 1)}
-                      className="w-10 text-center text-xs font-bold bg-transparent focus:outline-none"
+                      step="0.001"
+                      onChange={(e) => { const q = Math.round((parseFloat(e.target.value) || 0) * 1000) / 1000; if (q > 0) updateQuantity(idx, q); }}
+                      className="w-12 text-center text-xs font-bold bg-transparent focus:outline-none"
                     />
                     <button
                       onClick={() => updateQuantity(idx, item.quantity + 1)}
@@ -469,7 +575,7 @@ export const PosBillingPage: React.FC = () => {
         )}
 
         {/* Calculation & Payment Summary */}
-        <div className="p-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 space-y-2.5">
+        <div className="shrink-0 max-h-[58%] overflow-y-auto p-3.5 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 space-y-2.5">
           {/* Subtotal, discounts, GST summary */}
           <div className="space-y-1 text-xs">
             <div className="flex justify-between text-slate-500 dark:text-slate-400">
@@ -490,9 +596,17 @@ export const PosBillingPage: React.FC = () => {
             </div>
 
             <div className="flex justify-between text-slate-500 dark:text-slate-400">
-              <span>GST Tax (CGST + SGST):</span>
+              <span>GST Tax:</span>
               <span>{formatINR(totalTaxPaise)}</span>
             </div>
+
+            {roundOffPaise !== 0 && (
+              <div className="flex justify-between text-slate-500 dark:text-slate-400">
+                <span>Round-off:</span>
+                <span>{roundOffPaise > 0 ? '+' : '-'}{formatINR(Math.abs(roundOffPaise))}</span>
+              </div>
+            )}
+            {calcError && <div className="text-[11px] text-red-600">{calcError}</div>}
 
             <div className="flex justify-between text-base font-extrabold text-slate-900 dark:text-white pt-1.5 border-t border-slate-200 dark:border-slate-800">
               <span>Grand Total:</span>
@@ -520,6 +634,40 @@ export const PosBillingPage: React.FC = () => {
             ))}
           </div>
 
+          {/* Amount paid now / split / balance */}
+          {cart.length > 0 && (
+            <div className="space-y-1.5 text-xs">
+              {paymentMode !== 'CREDIT' && (
+                <div className="flex justify-between items-center text-slate-500 dark:text-slate-400">
+                  <span>{paymentMode === 'CASH' ? 'Cash received (₹):' : 'Paid now (₹):'}</span>
+                  <input type="number" min="0" step="0.01" placeholder={(Math.max(0, grandTotalPaise - splitPaise) / 100).toFixed(2)}
+                    value={amountPaidRupees} onChange={(e) => setAmountPaidRupees(e.target.value)}
+                    className="w-24 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-1.5 py-0.5 text-right font-mono text-xs focus:outline-none" />
+                </div>
+              )}
+              <label className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                <input type="checkbox" checked={splitEnabled} onChange={(e) => setSplitEnabled(e.target.checked)} />
+                <span>Split / additional payment</span>
+              </label>
+              {splitEnabled && (
+                <div className="flex items-center gap-1.5">
+                  <Select value={splitMode} onChange={(e) => setSplitMode(e.target.value as PaymentMode)}
+                    className="flex-1 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-1.5 py-0.5 text-xs">
+                    {['UPI', 'CARD', 'CASH', 'BANK_TRANSFER', 'CHEQUE', 'WALLET'].map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                  </Select>
+                  <input type="number" min="0" step="0.01" placeholder="Amount ₹" value={splitRupees} onChange={(e) => setSplitRupees(e.target.value)}
+                    className="w-24 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded px-1.5 py-0.5 text-right font-mono text-xs focus:outline-none" />
+                </div>
+              )}
+              {changeDuePaise > 0 && <div className="flex justify-between font-semibold text-emerald-600"><span>Change to return:</span><span>{formatINR(changeDuePaise)}</span></div>}
+              {balanceDuePaise > 0 && (
+                <div className="flex justify-between font-semibold text-amber-600">
+                  <span>Balance on credit{selectedCustomerId ? '' : ' (select a customer)'}:</span><span>{formatINR(balanceDuePaise)}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Action Buttons: Hold, Clear, Complete Checkout */}
           <div className="flex items-center gap-2 pt-1">
             <button
@@ -542,7 +690,7 @@ export const PosBillingPage: React.FC = () => {
 
             <button
               onClick={handleCheckout}
-              disabled={cart.length === 0 || isSubmitting}
+              disabled={cart.length === 0 || isSubmitting || !!calcError}
               className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs py-3 rounded-xl shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50"
             >
               <Check className="w-4 h-4" />

@@ -8,6 +8,8 @@ import {
   X, RefreshCw, ShoppingCart, Truck, ShieldCheck, 
   Coins, FileText, Calendar, Building, HelpCircle 
 } from 'lucide-react';
+import { showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const ReturnsRefundsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'sales' | 'purchases'>('sales');
@@ -152,7 +154,7 @@ export const ReturnsRefundsPage: React.FC = () => {
     e.preventDefault();
     const activeItems = salesReturnItems.filter(it => it.returnQty > 0);
     if (!activeItems.length) {
-      alert('Please specify a return quantity of at least 1 item.');
+      showAlert('Please specify a return quantity of at least 1 item.');
       return;
     }
 
@@ -182,7 +184,7 @@ export const ReturnsRefundsPage: React.FC = () => {
       resetSalesForm();
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to submit sales return');
+      showAlert(err.message || 'Failed to submit sales return');
     }
   };
 
@@ -191,7 +193,7 @@ export const ReturnsRefundsPage: React.FC = () => {
     e.preventDefault();
     const activeItems = purReturnItems.filter(it => it.returnQty > 0);
     if (!activeItems.length) {
-      alert('Please specify a return quantity of at least 1 item.');
+      showAlert('Please specify a return quantity of at least 1 item.');
       return;
     }
 
@@ -220,7 +222,7 @@ export const ReturnsRefundsPage: React.FC = () => {
       resetPurchaseForm();
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to submit purchase return');
+      showAlert(err.message || 'Failed to submit purchase return');
     }
   };
 
@@ -251,7 +253,7 @@ export const ReturnsRefundsPage: React.FC = () => {
         setViewVoucher({ type: 'debit', data: res.data });
       }
     } catch (err: any) {
-      alert('Failed to load voucher details');
+      showAlert('Failed to load voucher details');
     }
   };
 
@@ -736,7 +738,7 @@ export const ReturnsRefundsPage: React.FC = () => {
                     <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
                       Refund Mode
                     </label>
-                    <select
+                    <Select
                       value={salesRefundMode}
                       onChange={(e: any) => setSalesRefundMode(e.target.value)}
                       className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-rose-500"
@@ -745,14 +747,14 @@ export const ReturnsRefundsPage: React.FC = () => {
                       <option value="UPI">UPI Refund</option>
                       <option value="BANK_TRANSFER">Bank Transfer</option>
                       <option value="STORE_CREDIT">Store Credit / Deduct Due Balance</option>
-                    </select>
+                    </Select>
                   </div>
 
                   <div>
                     <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
                       Return Reason
                     </label>
-                    <select
+                    <Select
                       value={salesReason}
                       onChange={(e) => setSalesReason(e.target.value)}
                       className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-rose-500"
@@ -762,7 +764,7 @@ export const ReturnsRefundsPage: React.FC = () => {
                       <option value="WRONG_ITEM">Wrong Item Handed</option>
                       <option value="EXPIRED">Near Expiry / Expired</option>
                       <option value="OTHER">Other Reason</option>
-                    </select>
+                    </Select>
                   </div>
                 </div>
 
@@ -932,7 +934,7 @@ export const ReturnsRefundsPage: React.FC = () => {
                     <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
                       Adjustment Mode
                     </label>
-                    <select
+                    <Select
                       value={purRefundMode}
                       onChange={(e: any) => setPurRefundMode(e.target.value)}
                       className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
@@ -940,14 +942,14 @@ export const ReturnsRefundsPage: React.FC = () => {
                       <option value="ADJUST_PAYABLE">Adjust Supplier Payable (Reduce Debt)</option>
                       <option value="CASH">Cash Received from Vendor</option>
                       <option value="BANK_TRANSFER">Bank Transfer / NEFT</option>
-                    </select>
+                    </Select>
                   </div>
 
                   <div>
                     <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
                       Return Reason
                     </label>
-                    <select
+                    <Select
                       value={purReason}
                       onChange={(e) => setPurReason(e.target.value)}
                       className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
@@ -957,7 +959,7 @@ export const ReturnsRefundsPage: React.FC = () => {
                       <option value="SHORT_EXPIRY">Short Expiry Received</option>
                       <option value="QUALITY_ISSUE">Poor Quality / Substandard</option>
                       <option value="OTHER">Other Reason</option>
-                    </select>
+                    </Select>
                   </div>
                 </div>
 

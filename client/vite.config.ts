@@ -10,6 +10,18 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,
+        // License updates arrive on a long-lived event stream. Do not buffer it.
+        timeout: 0,
+        proxyTimeout: 0,
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes) => {
+            const type = String(proxyRes.headers['content-type'] || '');
+            if (type.includes('text/event-stream')) {
+              proxyRes.headers['cache-control'] = 'no-cache, no-transform';
+              proxyRes.headers['x-accel-buffering'] = 'no';
+            }
+          });
+        },
       },
     },
   },

@@ -2,13 +2,97 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer components {
+  .btn-brand {
+    background-image: linear-gradient(to right, rgb(5 150 105), rgb(20 184 166));
+    color: white;
+    box-shadow: 0 10px 15px -3px rgb(5 150 105 / 0.3);
+  }
+  .btn-brand:hover:not(:disabled) {
+    background-image: linear-gradient(to right, rgb(16 185 129), rgb(45 212 191));
+  }
+  .btn-brand:disabled { opacity: 0.5; }
+}
+
 @layer base {
   :root {
     --brand-primary: 16 185 129;
+    /* Light: warm paper, not pure white. Cards stay white and sit on this shade. */
+    --slate-50: 238 243 240;
+    --slate-100: 226 234 229;
+    --slate-200: 206 218 211;
+    --slate-300: 176 194 184;
+    --slate-400: 112 130 120;
+    --slate-500: 82 99 90;
+    --slate-600: 58 74 66;
+    --slate-700: 40 54 48;
+    --slate-800: 28 39 34;
+    --slate-900: 18 26 22;
+    --slate-950: 10 16 14;
+  }
+
+  .dark {
+    /* Dark: three depths — canvas, panels, raised controls — all green-charcoal. */
+    --slate-50: 236 244 240;
+    --slate-100: 214 228 221;
+    --slate-200: 176 196 186;
+    --slate-300: 148 170 159;
+    --slate-400: 154 174 164;
+    --slate-500: 108 130 119;
+    --slate-600: 72 96 86;
+    --slate-700: 46 66 58;
+    --slate-800: 30 46 40;
+    --slate-900: 18 30 26;
+    --slate-950: 9 15 13;
+  }
+
+  html, body, #root {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    overscroll-behavior: none;
+    overscroll-behavior-x: none;
+    touch-action: pan-y;
   }
 
   body {
     @apply transition-colors duration-200;
+    background-color: rgb(var(--slate-50));
+  }
+
+  .dark body {
+    background-color: rgb(var(--slate-950));
+  }
+
+  .app-canvas {
+    background-color: rgb(var(--slate-50));
+    background-image:
+      radial-gradient(920px 420px at 100% -12%, rgba(16, 185, 129, 0.13), transparent 58%),
+      radial-gradient(640px 360px at -8% 108%, rgba(13, 148, 136, 0.08), transparent 52%);
+  }
+
+  .dark .app-canvas {
+    background-color: rgb(var(--slate-950));
+    background-image:
+      radial-gradient(980px 460px at 100% -14%, rgba(16, 185, 129, 0.16), transparent 56%),
+      radial-gradient(720px 420px at -12% 110%, rgba(6, 95, 70, 0.35), transparent 54%);
+  }
+
+  /* The desktop window draws its own title bar, so page shells fill the space under it. */
+  html.tauri-shell,
+  html.tauri-shell body,
+  html.tauri-shell #root {
+    height: 100%;
+    overflow: hidden;
+    overflow-x: hidden;
+    overscroll-behavior: none;
+    touch-action: pan-y;
+  }
+  html.tauri-shell .h-screen,
+  html.tauri-shell .min-h-screen,
+  html.tauri-shell .h-dvh {
+    height: 100% !important;
+    min-height: 0 !important;
   }
 }
 
@@ -60,3 +144,7 @@
     display: none !important;
   }
 }
+
+/* Popover list used by the custom Select */
+@keyframes apna-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+.apna-pop { animation: apna-pop 120ms ease-out; }

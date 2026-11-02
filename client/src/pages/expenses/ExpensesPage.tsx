@@ -5,6 +5,8 @@ import {
   Receipt, Plus, Filter, CheckCircle, TrendingDown, 
   DollarSign, X, Calendar 
 } from 'lucide-react';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 const EXPENSE_CATEGORIES = [
   'Store Rent',
@@ -64,7 +66,7 @@ export const ExpensesPage: React.FC = () => {
       setTimeout(() => setStatusMsg(''), 4000);
       loadExpenses();
     } catch (err: any) {
-      alert(err.message || 'Failed to record expense');
+      showAlert(err.message || 'Failed to record expense');
     }
   };
 
@@ -112,7 +114,7 @@ export const ExpensesPage: React.FC = () => {
 
       {/* Filter Bar */}
       <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center gap-3">
-        <select
+        <Select
           value={selectedCategory}
           onChange={(e) => setSelectedCategory(e.target.value)}
           className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-red-500"
@@ -121,7 +123,7 @@ export const ExpensesPage: React.FC = () => {
           {EXPENSE_CATEGORIES.map((c) => (
             <option key={c} value={c}>{c}</option>
           ))}
-        </select>
+        </Select>
       </div>
 
       {/* Expenses Table */}
@@ -134,6 +136,7 @@ export const ExpensesPage: React.FC = () => {
               <th className="p-3.5">Description / Purpose</th>
               <th className="p-3.5 text-center">Payment Mode</th>
               <th className="p-3.5 text-right">Amount (₹)</th>
+              <th className="p-3.5"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -151,11 +154,22 @@ export const ExpensesPage: React.FC = () => {
                   <td className="p-3.5 text-right font-mono font-bold text-red-600 dark:text-red-400">
                     -{formatINR(e.amount_paise)}
                   </td>
+                  <td className="p-3.5 text-right">
+                    <button
+                      onClick={async () => {
+                        if (!(await confirmDialog(`Delete expense ${e.category} of ${formatINR(e.amount_paise)}? This is recorded in the audit log.`, { danger: true }))) return;
+                        try { await api.deleteExpense(e.id); loadExpenses(); } catch (err: any) { showAlert(err.message || 'Failed to delete'); }
+                      }}
+                      className="text-[11px] font-semibold text-slate-400 hover:text-red-600"
+                    >
+                      Delete
+                    </button>
+                  </td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan={5} className="py-8 text-center text-slate-400">
+                <td colSpan={6} className="py-8 text-center text-slate-400">
                   No expenses recorded yet. Click "Record New Expense" to log overheads.
                 </td>
               </tr>
@@ -178,7 +192,7 @@ export const ExpensesPage: React.FC = () => {
             <form onSubmit={handleCreateExpense} className="space-y-4 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Expense Category *</label>
-                <select
+                <Select
                   required
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
@@ -187,7 +201,7 @@ export const ExpensesPage: React.FC = () => {
                   {EXPENSE_CATEGORIES.map((c) => (
                     <option key={c} value={c}>{c}</option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -206,7 +220,7 @@ export const ExpensesPage: React.FC = () => {
 
                 <div>
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Payment Mode</label>
-                  <select
+                  <Select
                     value={paymentMode}
                     onChange={(e) => setPaymentMode(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:border-red-500"
@@ -215,7 +229,7 @@ export const ExpensesPage: React.FC = () => {
                     <option value="CASH">Cash</option>
                     <option value="CARD">Card</option>
                     <option value="BANK_TRANSFER">Bank Transfer</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
 

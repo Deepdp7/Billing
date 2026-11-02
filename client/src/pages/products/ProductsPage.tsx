@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../lib/api.js';
+import { api, downloadFile } from '../../lib/api.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { Product, Category } from '../../types/index.js';
 import { formatINR, paiseToRupees, rupeesToPaise } from '../../lib/utils.js';
@@ -7,6 +7,8 @@ import {
   Package, Plus, Search, Edit2, Trash2, Barcode, 
   Tag, AlertTriangle, X, Check, RefreshCw 
 } from 'lucide-react';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const ProductsPage: React.FC = () => {
   const { user } = useAuth();
@@ -166,12 +168,12 @@ export const ProductsPage: React.FC = () => {
   };
 
   const handleDelete = async (id: string, prodName: string) => {
-    if (!window.confirm(`Are you sure you want to deactivate "${prodName}"?`)) return;
+    if (!(await confirmDialog(`Are you sure you want to deactivate "${prodName}"?`, { danger: true }))) return;
     try {
       await api.deleteProduct(id);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to delete product');
+      showAlert(err.message || 'Failed to delete product');
     }
   };
 
@@ -188,6 +190,13 @@ export const ProductsPage: React.FC = () => {
           </p>
         </div>
 
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <button
+          onClick={() => downloadFile('/app/products/export?format=xlsx', 'products.xlsx').catch((err) => showAlert(err.message))}
+          className="text-xs font-semibold px-3 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50"
+        >
+          Export Excel
+        </button>
         <button
           onClick={openAddModal}
           className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md shadow-emerald-500/25 transition active:scale-95 self-start sm:self-auto"
@@ -195,6 +204,7 @@ export const ProductsPage: React.FC = () => {
           <Plus className="w-4 h-4" />
           <span>Add New Product</span>
         </button>
+        </div>
       </div>
 
       {/* Filter Bar */}
@@ -210,7 +220,7 @@ export const ProductsPage: React.FC = () => {
           />
         </div>
 
-        <select
+        <Select
           value={selectedCategory}
           onChange={(e) => setSelectedCategory(e.target.value)}
           className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
@@ -219,7 +229,7 @@ export const ProductsPage: React.FC = () => {
           {categories.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
-        </select>
+        </Select>
       </div>
 
       {/* Table */}
@@ -388,7 +398,7 @@ export const ProductsPage: React.FC = () => {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Category</label>
-                  <select
+                  <Select
                     value={categoryId}
                     onChange={(e) => setCategoryId(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
@@ -396,12 +406,12 @@ export const ProductsPage: React.FC = () => {
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Unit</label>
-                  <select
+                  <Select
                     value={unit}
                     onChange={(e) => setUnit(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
@@ -414,7 +424,7 @@ export const ProductsPage: React.FC = () => {
                     <option value="strip">Strip</option>
                     <option value="bottle">Bottle</option>
                     <option value="portion">Portion</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
@@ -466,7 +476,7 @@ export const ProductsPage: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">GST Tax %</label>
-                  <select
+                  <Select
                     value={taxRate}
                     onChange={(e) => setTaxRate(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
@@ -476,7 +486,7 @@ export const ProductsPage: React.FC = () => {
                     <option value="12">12%</option>
                     <option value="18">18%</option>
                     <option value="28">28%</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
 

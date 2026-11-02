@@ -6,6 +6,7 @@ import {
   FileText, Plus, ArrowRightCircle, CheckCircle, 
   Trash2, X 
 } from 'lucide-react';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 
 export const QuotationsPage: React.FC<{ onNavigateToInvoices: () => void }> = ({ onNavigateToInvoices }) => {
   const [quotes, setQuotes] = useState<any[]>([]);
@@ -37,7 +38,7 @@ export const QuotationsPage: React.FC<{ onNavigateToInvoices: () => void }> = ({
   const handleCreateQuotation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName || !quoteItems.length) {
-      alert('Please enter client name and add at least one line item');
+      showAlert('Please enter client name and add at least one line item');
       return;
     }
 
@@ -60,12 +61,12 @@ export const QuotationsPage: React.FC<{ onNavigateToInvoices: () => void }> = ({
       setTimeout(() => setStatusMsg(''), 4000);
       loadQuotations();
     } catch (err: any) {
-      alert(err.message || 'Failed to create quotation');
+      showAlert(err.message || 'Failed to create quotation');
     }
   };
 
   const handleConvert = async (id: string, num: string) => {
-    if (!window.confirm(`Convert estimate "${num}" into an official GST Tax Invoice now?`)) return;
+    if (!(await confirmDialog(`Convert estimate "${num}" into an official GST Tax Invoice now?`))) return;
 
     try {
       await api.convertQuotationToInvoice(id);
@@ -73,7 +74,7 @@ export const QuotationsPage: React.FC<{ onNavigateToInvoices: () => void }> = ({
       setTimeout(() => setStatusMsg(''), 4000);
       loadQuotations();
     } catch (err: any) {
-      alert(err.message || 'Failed to convert');
+      showAlert(err.message || 'Failed to convert');
     }
   };
 

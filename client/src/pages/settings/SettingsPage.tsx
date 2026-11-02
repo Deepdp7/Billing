@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../context/AuthContext.js';
-import { Settings, Store, Save, CheckCircle, Shield, Layers } from 'lucide-react';
+import { InvoicePreferences } from './InvoicePreferences.js';
+import { Settings, Store, Save, CheckCircle, Shield, Layers, Trash2 } from 'lucide-react';
+import { promptDialog, showAlert } from '../../components/ui/dialogs.js';
 
 export const SettingsPage: React.FC = () => {
   const { user, refreshUser } = useAuth();
@@ -59,8 +61,23 @@ export const SettingsPage: React.FC = () => {
       setStatusMsg('Business profile and invoice settings updated successfully!');
       setTimeout(() => setStatusMsg(''), 4000);
     } catch (err: any) {
-      alert(err.message || 'Failed to update settings');
+      showAlert(err.message || 'Failed to update settings');
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const eraseThisComputer = async () => {
+    const typed = await promptDialog(
+      'This removes only Apna Billing on this computer: the login, bills, products, and stock. A backup is saved first, and nothing is erased if it cannot be. Other files on the computer stay. You can sign up again with the same email.',
+      { title: 'Erase this shop', placeholder: 'Business name', required: true, danger: true, confirmText: 'Erase shop data' },
+    );
+    if (!typed) return;
+    setLoading(true);
+    try {
+      await api.eraseShop(typed);
+    } catch (err: any) {
+      showAlert(err.message || 'Could not erase this shop');
       setLoading(false);
     }
   };
@@ -254,6 +271,23 @@ export const SettingsPage: React.FC = () => {
         </div>
       </div>
 
+      <InvoicePreferences />
+
+      {(user?.role === 'BUSINESS_OWNER' || user?.role === 'SUPER_ADMIN') && (
+        <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-2xl shadow-sm p-6 space-y-3">
+          <div className="flex items-center gap-2">
+            <Trash2 className="w-5 h-5 text-rose-600" />
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Erase this shop from this computer</h3>
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Deletes only this app’s data on this computer, after saving a backup of it. Windows and your other files are not touched. After this, the sign-up screen accepts the same email again.
+          </p>
+          <button type="button" onClick={eraseThisComputer} disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-3 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50">
+            <Trash2 className="w-3.5 h-3.5" />Erase shop data
+          </button>
+        </div>
+      )}
     </div>
   );
 };

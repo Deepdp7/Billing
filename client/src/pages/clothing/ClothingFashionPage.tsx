@@ -7,6 +7,8 @@ import {
   ArrowLeftRight, CheckCircle, AlertTriangle, 
   Layers, Package, Edit2, X, Barcode, Check, ChevronDown, ChevronRight
 } from 'lucide-react';
+import { showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const ClothingFashionPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'matrix' | 'exchanges'>('matrix');
@@ -105,13 +107,13 @@ export const ClothingFashionPage: React.FC = () => {
   const handleCreateStyle = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!styleName || !baseSku || !selectedSizes.length) {
-      alert('Please fill product name, base SKU, and select at least one size.');
+      showAlert('Please fill product name, base SKU, and select at least one size.');
       return;
     }
 
     const colors = colorsInput.split(',').map(c => c.trim()).filter(Boolean);
     if (!colors.length) {
-      alert('Please specify at least one color.');
+      showAlert('Please specify at least one color.');
       return;
     }
 
@@ -135,7 +137,7 @@ export const ClothingFashionPage: React.FC = () => {
       resetAddStyleForm();
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to create apparel matrix');
+      showAlert(err.message || 'Failed to create apparel matrix');
     }
   };
 
@@ -162,7 +164,7 @@ export const ClothingFashionPage: React.FC = () => {
       setEditStockModal(null);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to update variant stock');
+      showAlert(err.message || 'Failed to update variant stock');
     }
   };
 
@@ -170,7 +172,7 @@ export const ClothingFashionPage: React.FC = () => {
   const handleCreateExchange = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!exchangeInvNum || !returnedStyle || !issuedStyle) {
-      alert('Please provide original invoice number and styles.');
+      showAlert('Please provide original invoice number and styles.');
       return;
     }
 
@@ -206,7 +208,7 @@ export const ClothingFashionPage: React.FC = () => {
       setIsExchangeModalOpen(false);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to process exchange');
+      showAlert(err.message || 'Failed to process exchange');
     }
   };
 
@@ -924,7 +926,7 @@ export const ClothingFashionPage: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Exchange Reason</label>
-                  <select
+                  <Select
                     value={exchangeReason}
                     onChange={(e) => setExchangeReason(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs"
@@ -933,7 +935,7 @@ export const ClothingFashionPage: React.FC = () => {
                     <option value="COLOR_MISMATCH">Color Change Requested</option>
                     <option value="DEFECT">Defective Stitching / Button</option>
                     <option value="GIFT_EXCHANGE">Gift Exchange by Recipient</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div>

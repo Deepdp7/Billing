@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
-import { useTheme } from '../../context/ThemeContext.js';
+import { useLicense } from '../../context/LicenseContext.js';
+import { ThemeSwitch } from '../ThemeSwitch.js';
 import { useLanguage, Language } from '../../context/LanguageContext.js';
 import { 
-  Sun, Moon, Bell, LogOut, ChevronDown, Store, Shield, 
+  Bell, LogOut, ChevronDown, Store, Shield, 
   PlusCircle, RefreshCw, ShoppingCart, Languages, GraduationCap, Factory
 } from 'lucide-react';
 
@@ -14,23 +15,23 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ onNavigate }) => {
   const { user, logout, quickDemoLogin } = useAuth();
-  const { theme, toggleTheme } = useTheme();
+  const { system, license } = useLicense();
   const { language, setLanguage, t } = useLanguage();
   const [showDemoMenu, setShowDemoMenu] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showLangMenu, setShowLangMenu] = useState(false);
 
   return (
-    <header className="h-16 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-30 px-4 lg:px-6 flex items-center justify-between">
+    <header className="h-16 shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md z-30 px-4 lg:px-6 flex items-center justify-between gap-3">
       {/* Left: Active Business Badge */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 min-w-0">
         {user?.businessName ? (
-          <div className="flex items-center gap-2.5 bg-slate-100 dark:bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700/60">
-            <Store className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold leading-tight text-slate-800 dark:text-slate-100">{user.businessName}</span>
+          <div className="flex items-center gap-2.5 min-w-[9rem] max-w-[14rem] bg-slate-100 dark:bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700/60">
+            <Store className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-semibold leading-tight text-slate-800 dark:text-slate-100 truncate">{user.businessName}</span>
               <span className="text-[10px] font-medium tracking-wide uppercase text-slate-500 dark:text-slate-400">
-                {user.businessCategory || 'Store'} · {user.planId === 'plan_pro' ? 'Pro Plan' : 'Active'}
+                {user.businessCategory || 'Store'} · {license?.license ? `${license.license.plan.name}` : 'Active'}
               </span>
             </div>
           </div>
@@ -41,11 +42,11 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate }) => {
           </div>
         ) : null}
 
-        {/* Quick Demo Switcher Dropdown */}
-        <div className="relative">
+        {/* Quick Demo Switcher Dropdown (demo mode only) */}
+        {system?.demoMode && <div className="relative">
           <button
             onClick={() => setShowDemoMenu(!showDemoMenu)}
-            className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800 transition"
+            className="hidden xl:flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 border border-emerald-200 dark:border-emerald-800 transition"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Switch Business</span>
@@ -127,11 +128,11 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate }) => {
               </button>
             </div>
           )}
-        </div>
+        </div>}
       </div>
 
       {/* Right Controls */}
-      <div className="flex items-center gap-2 sm:gap-2.5">
+      <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
         {/* Fast Bill Button */}
         {user?.businessId && (
           <button
@@ -191,14 +192,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate }) => {
           )}
         </div>
 
-        {/* Theme Toggle */}
-        <button
-          onClick={toggleTheme}
-          aria-label="Toggle theme"
-          className="p-2 rounded-lg text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-        >
-          {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-indigo-600" />}
-        </button>
+        <ThemeSwitch />
 
         {/* User Menu */}
         <div className="relative">

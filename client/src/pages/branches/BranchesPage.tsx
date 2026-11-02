@@ -8,6 +8,8 @@ import {
   Truck, Package, Search, Printer, X, RefreshCw, 
   Clock, CheckCircle, Ban, FileText, ArrowRight
 } from 'lucide-react';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const BranchesPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'branches' | 'transfers'>('branches');
@@ -113,7 +115,7 @@ export const BranchesPage: React.FC = () => {
   };
 
   const handleDeleteBranch = async (id: string) => {
-    if (!confirm('Are you sure you want to remove this branch?')) return;
+    if (!(await confirmDialog('Are you sure you want to remove this branch?', { danger: true }))) return;
     try {
       await api.deleteBranch(id);
       showNotification('success', 'Branch removed successfully');
@@ -128,7 +130,7 @@ export const BranchesPage: React.FC = () => {
     const prod = availableProducts.find(p => p.id === prodId);
     if (!prod) return;
     if (transferItems.some(i => i.productId === prodId)) {
-      alert('Product already added to transfer list');
+      showAlert('Product already added to transfer list');
       return;
     }
 
@@ -148,15 +150,15 @@ export const BranchesPage: React.FC = () => {
   const handleCreateTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!sourceBranchId || !destBranchId) {
-      alert('Please select both source and destination branches');
+      showAlert('Please select both source and destination branches');
       return;
     }
     if (sourceBranchId === destBranchId) {
-      alert('Source branch and destination branch cannot be the same');
+      showAlert('Source branch and destination branch cannot be the same');
       return;
     }
     if (!transferItems.length) {
-      alert('Please add at least one product to transfer');
+      showAlert('Please add at least one product to transfer');
       return;
     }
 
@@ -188,7 +190,7 @@ export const BranchesPage: React.FC = () => {
       setTransferNotes('');
       loadAll();
     } catch (err: any) {
-      alert(err.message || 'Failed to dispatch stock transfer');
+      showAlert(err.message || 'Failed to dispatch stock transfer');
     } finally {
       setSubmitting(false);
     }
@@ -196,27 +198,27 @@ export const BranchesPage: React.FC = () => {
 
   // Receive Transfer
   const handleReceiveTransfer = async (id: string, num: string) => {
-    if (!confirm(`Confirm receipt of all goods for Transfer Challan ${num}?`)) return;
+    if (!(await confirmDialog(`Confirm receipt of all goods for Transfer Challan ${num}?`))) return;
     try {
       const res = await api.receiveTransfer(id);
       showNotification('success', res.message || 'Transfer completed and received!');
       if (selectedChallan) setSelectedChallan(null);
       loadAll();
     } catch (err: any) {
-      alert(err.message || 'Failed to receive transfer');
+      showAlert(err.message || 'Failed to receive transfer');
     }
   };
 
   // Cancel Transfer
   const handleCancelTransfer = async (id: string, num: string) => {
-    if (!confirm(`Cancel Transfer Challan ${num} and restore goods back to warehouse stock?`)) return;
+    if (!(await confirmDialog(`Cancel Transfer Challan ${num} and restore goods back to warehouse stock?`, { danger: true }))) return;
     try {
       const res = await api.cancelTransfer(id);
       showNotification('success', res.message || 'Transfer cancelled and stock restored');
       if (selectedChallan) setSelectedChallan(null);
       loadAll();
     } catch (err: any) {
-      alert(err.message || 'Failed to cancel transfer');
+      showAlert(err.message || 'Failed to cancel transfer');
     }
   };
 
@@ -226,7 +228,7 @@ export const BranchesPage: React.FC = () => {
       const res = await api.getTransferById(id);
       setSelectedChallan(res.data);
     } catch (err: any) {
-      alert('Failed to load transfer challan details');
+      showAlert('Failed to load transfer challan details');
     }
   };
 
@@ -382,7 +384,7 @@ export const BranchesPage: React.FC = () => {
 
         {activeTab === 'transfers' && (
           <div className="flex items-center gap-2 px-2">
-            <select
+            <Select
               value={transferStatusFilter}
               onChange={(e) => setTransferStatusFilter(e.target.value)}
               className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-800 dark:text-slate-100 focus:outline-none"
@@ -391,7 +393,7 @@ export const BranchesPage: React.FC = () => {
               <option value="IN_TRANSIT">In-Transit Only</option>
               <option value="COMPLETED">Completed</option>
               <option value="CANCELLED">Cancelled</option>
-            </select>
+            </Select>
 
             <div className="relative min-w-[200px]">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
@@ -725,7 +727,7 @@ export const BranchesPage: React.FC = () => {
                   <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                     Source Branch (Deducts Stock) *
                   </label>
-                  <select
+                  <Select
                     value={sourceBranchId}
                     onChange={(e) => setSourceBranchId(e.target.value)}
                     className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs"
@@ -733,14 +735,14 @@ export const BranchesPage: React.FC = () => {
                     {branches.map(b => (
                       <option key={b.id} value={b.id}>{b.name} ({b.code})</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
                   <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                     Destination Branch (Receives Stock) *
                   </label>
-                  <select
+                  <Select
                     value={destBranchId}
                     onChange={(e) => setDestBranchId(e.target.value)}
                     className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs"
@@ -748,7 +750,7 @@ export const BranchesPage: React.FC = () => {
                     {branches.map(b => (
                       <option key={b.id} value={b.id}>{b.name} ({b.code})</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               </div>
 
@@ -757,7 +759,7 @@ export const BranchesPage: React.FC = () => {
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">
                   Add Item from Catalog
                 </label>
-                <select
+                <Select
                   onChange={(e) => {
                     if (e.target.value) {
                       handleAddItemToTransfer(e.target.value);
@@ -772,7 +774,7 @@ export const BranchesPage: React.FC = () => {
                       {p.name} (Available: {p.stock_quantity} {p.unit || 'Pcs'})
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               {/* Transfer Items List */}

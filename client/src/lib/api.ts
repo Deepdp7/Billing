@@ -65,6 +65,8 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
+  eraseShop: (confirmName: string) =>
+    request<{ ok: boolean }>('/auth/erase-shop', { method: 'POST', body: JSON.stringify({ confirmName }) }),
 
   // Products & Categories
   getProducts: (params: { search?: string; categoryId?: string; barcode?: string; lowStockOnly?: boolean; page?: number; limit?: number } = {}) => {
@@ -638,7 +640,109 @@ export const api = {
     }),
   getServiceSummary: () =>
     request<{ summary: any }>('/app/verticals/service/summary'),
+
+  // ---------------- System, license, settings ----------------
+  getSystemInfo: () => request<any>('/system/info'),
+  getLicenseStatus: () => request<any>('/license/status'),
+  checkConnectivity: () => request<{ online: boolean }>('/license/connectivity', { method: 'POST' }),
+  startTrial: (data: { name: string; businessName: string; email: string; phone?: string }) =>
+    request<any>('/license/trial', { method: 'POST', body: JSON.stringify(data) }),
+  activateLicense: (licenseKey: string) => request<any>('/license/activate', { method: 'POST', body: JSON.stringify({ licenseKey }) }),
+  deactivateLicense: () => request<any>('/license/deactivate', { method: 'POST', body: '{}' }),
+  syncLicense: () => request<any>('/license/sync', { method: 'POST', body: '{}' }),
+  trackUsage: (feature: string) => request<any>('/license/usage', { method: 'POST', body: JSON.stringify({ feature }) }),
+  getLocalUsage: () => request<{ data: any[] }>('/license/usage'),
+  getBusinessSettings: () => request<{ settings: any }>('/app/business/settings'),
+  updateBusinessSettings: (data: any) => request<{ settings: any }>('/app/business/settings', { method: 'PUT', body: JSON.stringify(data) }),
+
+  // ---------------- Billing extras ----------------
+  recordInvoicePayment: (id: string, data: { amountPaise: number; mode: string; reference?: string; paymentDate?: string }) =>
+    request<{ invoice: any }>(`/app/billing/invoices/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
+  cancelInvoiceWithReason: (id: string, reason: string, refundMode?: string) =>
+    request<any>(`/app/billing/invoices/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason, refundMode }) }),
+  duplicateInvoice: (id: string) => request<{ invoice: any }>(`/app/billing/invoices/${id}/duplicate`, { method: 'POST', body: '{}' }),
+  issueDraft: (id: string, data: any) => request<{ invoice: any }>(`/app/billing/invoices/${id}/issue`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteDraft: (id: string) => request<any>(`/app/billing/invoices/${id}/draft`, { method: 'DELETE' }),
+  searchInvoices: (params: Record<string, string | number | undefined>) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.append(k, String(v));
+    return request<{ data: any[]; pagination: any }>(`/app/billing/invoices?${q.toString()}`);
+  },
+  getHeldBills: () => request<{ data: any[] }>('/app/billing/held'),
+  holdBill: (data: { label?: string; customerName?: string; payload: any }) =>
+    request<{ id: string }>('/app/billing/held', { method: 'POST', body: JSON.stringify(data) }),
+  deleteHeldBill: (id: string) => request<any>(`/app/billing/held/${id}`, { method: 'DELETE' }),
+
+  // ---------------- Customers extras ----------------
+  updateCustomer: (id: string, data: any) => request<{ customer: any }>(`/app/customers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCustomer: (id: string, deactivate = false) =>
+    request<any>(`/app/customers/${id}${deactivate ? '?mode=deactivate' : ''}`, { method: 'DELETE' }),
+  getCustomerLedger: (id: string) => request<any>(`/app/customers/${id}/ledger`),
+  receiveCustomerPayment: (id: string, data: { amountPaise: number; mode: string; reference?: string; notes?: string }) =>
+    request<any>(`/app/customers/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ---------------- Expenses / suppliers / reports ----------------
+  updateExpense: (id: string, data: any) => request<any>(`/app/expenses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteExpense: (id: string) => request<any>(`/app/expenses/${id}`, { method: 'DELETE' }),
+  paySupplier: (id: string, data: { amountPaise: number; mode: string; reference?: string }) =>
+    request<any>(`/app/suppliers/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
+  getReport: (type: string, params: Record<string, string | undefined> = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v) q.append(k, v);
+    return request<any>(`/app/reports/${type}?${q.toString()}`);
+  },
+
+  // ---------------- Backups ----------------
+  verifyBackup: (id: string) => request<any>(`/app/backups/${id}/verify`, { method: 'POST', body: '{}' }),
+  deleteBackup: (id: string) => request<any>(`/app/backups/${id}`, { method: 'DELETE' }),
+  updateBackupSettings: (data: any) => request<any>('/app/backups/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  restoreBackupFromFile: async (file: File) => {
+    const token = localStorage.getItem('apna_billing_token');
+    const res = await fetch(`${API_BASE}/app/backups/restore-upload`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: file,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(data.message || 'Restore failed', data.code);
+    return data;
+  },
 };
+
+/** Download an authenticated file (CSV/XLSX/JSON export) via the API, preserving the server's filename. */
+export async function downloadFile(endpoint: string, fallbackName = 'export'): Promise<void> {
+  const token = localStorage.getItem('apna_billing_token');
+  const res = await fetch(`${API_BASE}${endpoint}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new ApiError(data.message || `Download failed (${res.status})`, data.code);
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] || fallbackName;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** Save the current window as PDF (desktop app) or open the print dialog (browser). Tracks pdf_export usage. */
+export async function saveAsPdf(fileName: string): Promise<'saved' | 'printed' | 'cancelled'> {
+  const desktop = (window as any).apnaDesktop;
+  try { await api.trackUsage('pdf_export'); } catch (err: any) {
+    if (err?.code === 'FEATURE_DISABLED') throw err;
+  }
+  if (desktop?.saveAsPdf) {
+    const r = await desktop.saveAsPdf(fileName);
+    return r?.saved ? 'saved' : 'cancelled';
+  }
+  window.print();
+  return 'printed';
+}
 
 
 

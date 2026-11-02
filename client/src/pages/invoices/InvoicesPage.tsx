@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../lib/api.js';
+import { api, downloadFile } from '../../lib/api.js';
 import { Invoice } from '../../types/index.js';
 import { formatINR, formatDate } from '../../lib/utils.js';
 import { InvoiceModal } from '../../components/billing/InvoiceModal.js';
 import { 
   Search, Eye, Printer, XCircle, FileText, 
-  CheckCircle, AlertCircle, RefreshCw 
+  CheckCircle, AlertCircle, RefreshCw, IndianRupee, Copy, Download, FileCheck2, Trash2
 } from 'lucide-react';
+import { confirmDialog } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const InvoicesPage: React.FC = () => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -15,17 +17,39 @@ export const InvoicesPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [actionMsg, setActionMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [paymentStatus, setPaymentStatus] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [paying, setPaying] = useState<Invoice | null>(null);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMode, setPayMode] = useState('CASH');
+  const [payRef, setPayRef] = useState('');
+  const [cancelling, setCancelling] = useState<Invoice | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [refundMode, setRefundMode] = useState('');
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     loadInvoices();
-  }, [search, statusFilter]);
+  }, [search, statusFilter, paymentStatus, fromDate, toDate]);
+
+  const flash = (msg: string) => {
+    setActionMsg(msg);
+    setErrorMsg('');
+    setTimeout(() => setActionMsg(''), 4000);
+  };
 
   const loadInvoices = async () => {
     try {
       setLoading(true);
-      const res = await api.getInvoices({
+      const res = await api.searchInvoices({
         search: search || undefined,
         status: statusFilter || undefined,
+        paymentStatus: paymentStatus || undefined,
+        fromDate: fromDate || undefined,
+        toDate: toDate || undefined,
+        limit: 200,
       });
       setInvoices(res.data);
     } catch (err) {
@@ -35,20 +59,81 @@ export const InvoicesPage: React.FC = () => {
     }
   };
 
-  const handleCancel = async (id: string, num: string) => {
-    if (!window.confirm(`Are you sure you want to cancel invoice ${num}? This will atomically restore product stock and reverse credit balance.`)) {
-      return;
-    }
-
+  const confirmCancel = async () => {
+    if (!cancelling) return;
+    setBusy(true);
     try {
-      await api.cancelInvoice(id);
-      setActionMsg(`Invoice ${num} cancelled successfully and stock restored.`);
-      setTimeout(() => setActionMsg(''), 4000);
+      await api.cancelInvoiceWithReason(cancelling.id, cancelReason, refundMode || undefined);
+      flash(`Invoice ${cancelling.invoice_number} cancelled: stock restored, payment refunded/reversed and audit entry recorded.`);
+      setCancelling(null);
+      setCancelReason('');
       loadInvoices();
     } catch (err: any) {
-      alert(err.message || 'Failed to cancel invoice');
+      setErrorMsg(err.message || 'Failed to cancel invoice');
+    } finally {
+      setBusy(false);
     }
   };
+
+  const confirmPayment = async () => {
+    if (!paying) return;
+    setBusy(true);
+    try {
+      await api.recordInvoicePayment(paying.id, { amountPaise: Math.round((parseFloat(payAmount) || 0) * 100), mode: payMode, reference: payRef || undefined });
+      flash(`Payment recorded against ${paying.invoice_number}.`);
+      setPaying(null);
+      loadInvoices();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to record payment');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const duplicate = async (inv: Invoice) => {
+    try {
+      const r = await api.duplicateInvoice(inv.id);
+      flash(`Draft copy ${r.invoice.invoice_number} created from ${inv.invoice_number}. Filter by status "Draft" to issue it.`);
+      loadInvoices();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to duplicate');
+    }
+  };
+
+  const issueDraft = async (inv: Invoice) => {
+    try {
+      const r = await api.issueDraft(inv.id, { paymentMode: 'CASH' });
+      flash(`Draft issued as invoice ${r.invoice.invoice_number}.`);
+      loadInvoices();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to issue draft');
+    }
+  };
+
+  const deleteDraft = async (inv: Invoice) => {
+    if (!(await confirmDialog('Delete this draft?', { danger: true }))) return;
+    try {
+      await api.deleteDraft(inv.id);
+      flash('Draft deleted.');
+      loadInvoices();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to delete draft');
+    }
+  };
+
+  const exportList = async (format: 'csv' | 'xlsx') => {
+    try {
+      const q = new URLSearchParams();
+      if (fromDate) q.append('fromDate', fromDate);
+      if (toDate) q.append('toDate', toDate);
+      q.append('format', format);
+      await downloadFile(`/app/reports/invoices/export?${q.toString()}`, `invoices.${format}`);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Export failed');
+    }
+  };
+
+  const inputCls = 'bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-emerald-500';
 
   return (
     <div className="p-4 lg:p-8 space-y-6 max-w-7xl mx-auto">
@@ -63,6 +148,13 @@ export const InvoicesPage: React.FC = () => {
           </p>
         </div>
 
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <button onClick={() => exportList('xlsx')} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 transition shadow-sm">
+          <Download className="w-3.5 h-3.5" /><span>Excel</span>
+        </button>
+        <button onClick={() => exportList('csv')} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 transition shadow-sm">
+          <Download className="w-3.5 h-3.5" /><span>CSV</span>
+        </button>
         <button
           onClick={loadInvoices}
           className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 transition shadow-sm self-start sm:self-auto"
@@ -70,12 +162,21 @@ export const InvoicesPage: React.FC = () => {
           <RefreshCw className="w-3.5 h-3.5" />
           <span>Refresh</span>
         </button>
+        </div>
       </div>
 
       {actionMsg && (
         <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs rounded-xl flex items-center gap-2">
           <CheckCircle className="w-4 h-4 shrink-0" />
           <span>{actionMsg}</span>
+        </div>
+      )}
+
+      {errorMsg && (
+        <div className="p-3 bg-red-50 dark:bg-red-950/60 border border-red-300 dark:border-red-800 text-red-800 dark:text-red-300 text-xs rounded-xl flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span className="flex-1">{errorMsg}</span>
+          <button onClick={() => setErrorMsg('')}>✕</button>
         </div>
       )}
 
@@ -92,15 +193,24 @@ export const InvoicesPage: React.FC = () => {
           />
         </div>
 
-        <select
+        <Select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-800 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
         >
           <option value="">All Statuses</option>
           <option value="ISSUED">Issued (Valid)</option>
+          <option value="DRAFT">Draft</option>
           <option value="CANCELLED">Cancelled</option>
-        </select>
+        </Select>
+        <Select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)} className={inputCls}>
+          <option value="">Any payment</option>
+          <option value="PAID">Paid</option>
+          <option value="PARTIAL">Partially paid</option>
+          <option value="UNPAID">Unpaid</option>
+        </Select>
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className={inputCls} title="From date" />
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className={inputCls} title="To date" />
       </div>
 
       {/* Table */}
@@ -147,12 +257,17 @@ export const InvoicesPage: React.FC = () => {
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
                         {inv.payment_mode}
                       </span>
+                      {inv.status === 'ISSUED' && inv.payment_status !== 'PAID' && (
+                        <div className="text-[10px] font-bold text-amber-600 mt-0.5">{inv.payment_status} · due {formatINR(inv.total_paise - inv.amount_paid_paise)}</div>
+                      )}
                     </td>
                     <td className="p-3.5 text-center">
                       <span
                         className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                           inv.status === 'ISSUED'
                             ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : inv.status === 'DRAFT'
+                            ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
                             : 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
                         }`}
                       >
@@ -171,9 +286,31 @@ export const InvoicesPage: React.FC = () => {
                         >
                           <Printer className="w-3.5 h-3.5" />
                         </button>
+                        {inv.status === 'ISSUED' && inv.payment_status !== 'PAID' && (
+                          <button
+                            onClick={() => { setPaying(inv); setPayAmount(((inv.total_paise - inv.amount_paid_paise) / 100).toFixed(2)); setPayMode('CASH'); setPayRef(''); }}
+                            className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950 text-slate-400 hover:text-emerald-600 transition"
+                            title="Receive Payment"
+                          >
+                            <IndianRupee className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {inv.status !== 'DRAFT' && (
+                          <button onClick={() => duplicate(inv)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-indigo-600 transition" title="Duplicate as Draft">
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {inv.status === 'DRAFT' && (<>
+                          <button onClick={() => issueDraft(inv)} className="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 transition" title="Issue draft (cash)">
+                            <FileCheck2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => deleteDraft(inv)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 transition" title="Delete draft">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>)}
                         {inv.status === 'ISSUED' && (
                           <button
-                            onClick={() => handleCancel(inv.id, inv.invoice_number)}
+                            onClick={() => { setCancelling(inv); setCancelReason(''); setRefundMode(''); }}
                             className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 text-slate-400 hover:text-red-600 transition"
                             title="Cancel Invoice & Restore Stock"
                           >
@@ -195,6 +332,45 @@ export const InvoicesPage: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {paying && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 w-full max-w-sm space-y-3 shadow-2xl">
+            <h3 className="font-bold text-sm">Receive payment — {paying.invoice_number}</h3>
+            <p className="text-xs text-slate-500">Balance due {formatINR(paying.total_paise - paying.amount_paid_paise)}</p>
+            <input type="number" min="0" step="0.01" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className={`${inputCls} w-full`} placeholder="Amount ₹" />
+            <Select value={payMode} onChange={(e) => setPayMode(e.target.value)} className={`${inputCls} w-full`}>
+              {['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE', 'WALLET'].map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+            </Select>
+            <input value={payRef} onChange={(e) => setPayRef(e.target.value)} className={`${inputCls} w-full`} placeholder="Reference (UPI ref, cheque no.) — optional" />
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setPaying(null)} className="text-xs px-3 py-1.5 rounded-lg border border-slate-300">Cancel</button>
+              <button disabled={busy} onClick={confirmPayment} className="text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold disabled:opacity-50">Record payment</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelling && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 w-full max-w-sm space-y-3 shadow-2xl">
+            <h3 className="font-bold text-sm">Cancel invoice {cancelling.invoice_number}?</h3>
+            <p className="text-xs text-slate-500">Stock is restored, any balance owed is reversed and an audit entry is recorded. This cannot be undone.</p>
+            <textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={2} className={`${inputCls} w-full`} placeholder="Reason for cancellation (required)" />
+            {cancelling.amount_paid_paise > 0 && (
+              <Select value={refundMode} onChange={(e) => setRefundMode(e.target.value)} className={`${inputCls} w-full`}>
+                <option value="">Refund {formatINR(cancelling.amount_paid_paise)} via original mode</option>
+                {['CASH', 'UPI', 'CARD', 'BANK_TRANSFER'].map((m) => <option key={m} value={m}>Refund via {m.replace('_', ' ')}</option>)}
+                {cancelling.customer_id && <option value="CUSTOMER_CREDIT">Keep as customer credit (advance)</option>}
+              </Select>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setCancelling(null)} className="text-xs px-3 py-1.5 rounded-lg border border-slate-300">Keep invoice</button>
+              <button disabled={busy || cancelReason.trim().length < 3} onClick={confirmCancel} className="text-xs px-3 py-1.5 rounded-lg bg-red-600 text-white font-semibold disabled:opacity-50">Cancel invoice</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selectedInvoice && (
         <InvoiceModal

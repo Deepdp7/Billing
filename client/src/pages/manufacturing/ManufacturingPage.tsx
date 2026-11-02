@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { BomRecipe, ProductionOrder, ProductionOrderStatus } from '../../types/index.js';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export function ManufacturingPage() {
   const [activeTab, setActiveTab] = useState<'boms' | 'orders' | 'inventory'>('boms');
@@ -118,12 +120,12 @@ export function ManufacturingPage() {
   const handleCreateBom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bomForm.finished_product_id) {
-      alert('Please select a finished product.');
+      showAlert('Please select a finished product.');
       return;
     }
 
     if (bomForm.items.some((i) => !i.raw_material_id || i.quantity_required <= 0)) {
-      alert('Please select valid raw materials and required quantities.');
+      showAlert('Please select valid raw materials and required quantities.');
       return;
     }
 
@@ -144,23 +146,23 @@ export function ManufacturingPage() {
         })),
       });
 
-      alert('BOM Recipe created successfully!');
+      showAlert('BOM Recipe created successfully!');
       setIsCreateBomOpen(false);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to create BOM');
+      showAlert(err.message || 'Failed to create BOM');
     } finally {
       setIsActionLoading(false);
     }
   };
 
   const handleDeleteBom = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this BOM recipe?')) return;
+    if (!(await confirmDialog('Are you sure you want to delete this BOM recipe?', { danger: true }))) return;
     try {
       await api.deleteBom(id);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to delete BOM');
+      showAlert(err.message || 'Failed to delete BOM');
     }
   };
 
@@ -170,7 +172,7 @@ export function ManufacturingPage() {
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!orderForm.bom_id || Number(orderForm.target_quantity) <= 0) {
-      alert('Please choose a BOM recipe and enter a valid target quantity.');
+      showAlert('Please choose a BOM recipe and enter a valid target quantity.');
       return;
     }
 
@@ -183,11 +185,11 @@ export function ManufacturingPage() {
         notes: orderForm.notes || undefined,
       });
 
-      alert('Production work order created!');
+      showAlert('Production work order created!');
       setIsCreateOrderOpen(false);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to create production order');
+      showAlert(err.message || 'Failed to create production order');
     } finally {
       setIsActionLoading(false);
     }
@@ -216,7 +218,7 @@ export function ManufacturingPage() {
         setSelectedOrder({ ...selectedOrder, status: 'IN_PROGRESS' });
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to start order');
+      showAlert(err.message || 'Failed to start order');
     }
   };
 
@@ -232,25 +234,25 @@ export function ManufacturingPage() {
         overhead_cost_paise: Math.round(Number(executeForm.overhead_cost_rupees || 0) * 100),
       });
 
-      alert(res.message);
+      showAlert(res.message);
       setIsExecuteRunOpen(false);
       setSelectedOrder(null);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to execute production run');
+      showAlert(err.message || 'Failed to execute production run');
     } finally {
       setIsActionLoading(false);
     }
   };
 
   const handleCancelOrder = async (orderId: string) => {
-    if (!window.confirm('Are you sure you want to cancel this work order?')) return;
+    if (!(await confirmDialog('Are you sure you want to cancel this work order?', { danger: true }))) return;
     try {
       await api.cancelProductionOrder(orderId);
       loadData();
       if (selectedOrder) setSelectedOrder(null);
     } catch (err: any) {
-      alert(err.message || 'Failed to cancel order');
+      showAlert(err.message || 'Failed to cancel order');
     }
   };
 
@@ -616,7 +618,7 @@ export function ManufacturingPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Finished Good *</label>
-                  <select
+                  <Select
                     required
                     value={bomForm.finished_product_id}
                     onChange={(e) => setBomForm({ ...bomForm, finished_product_id: e.target.value })}
@@ -628,7 +630,7 @@ export function ManufacturingPage() {
                         {p.name} ({p.sku})
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
@@ -674,7 +676,7 @@ export function ManufacturingPage() {
                 {bomForm.items.map((item, idx) => (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-center">
                     <div className="col-span-5">
-                      <select
+                      <Select
                         required
                         value={item.raw_material_id}
                         onChange={(e) => updateBomItemRow(idx, 'raw_material_id', e.target.value)}
@@ -686,7 +688,7 @@ export function ManufacturingPage() {
                             {p.name}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </div>
 
                     <div className="col-span-3">
@@ -800,7 +802,7 @@ export function ManufacturingPage() {
             <form onSubmit={handleCreateOrder} className="space-y-3.5 mt-4 text-xs">
               <div>
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Select BOM Recipe *</label>
-                <select
+                <Select
                   required
                   value={orderForm.bom_id}
                   onChange={(e) => setOrderForm({ ...orderForm, bom_id: e.target.value })}
@@ -812,7 +814,7 @@ export function ManufacturingPage() {
                       {b.bom_code} — {b.finished_product_name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div>

@@ -6,6 +6,8 @@ import {
   Truck, Plus, Search, CheckCircle, PackagePlus, 
   Building2, X, PlusCircle, Trash2 
 } from 'lucide-react';
+import { showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const PurchasesPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -69,7 +71,7 @@ export const PurchasesPage: React.FC = () => {
       setTimeout(() => setStatusMsg(''), 4000);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to add supplier');
+      showAlert(err.message || 'Failed to add supplier');
     }
   };
 
@@ -89,7 +91,7 @@ export const PurchasesPage: React.FC = () => {
   const handleRecordPurchase = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSupplierId || !billNumber || !purchaseItems.length) {
-      alert('Please select supplier, invoice number, and add at least one item');
+      showAlert('Please select supplier, invoice number, and add at least one item');
       return;
     }
 
@@ -118,7 +120,7 @@ export const PurchasesPage: React.FC = () => {
       setTimeout(() => setStatusMsg(''), 4000);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'Failed to record purchase');
+      showAlert(err.message || 'Failed to record purchase');
     }
   };
 
@@ -371,7 +373,7 @@ export const PurchasesPage: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Select Supplier *</label>
-                  <select
+                  <Select
                     required
                     value={selectedSupplierId}
                     onChange={(e) => setSelectedSupplierId(e.target.value)}
@@ -380,7 +382,7 @@ export const PurchasesPage: React.FC = () => {
                     {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>{s.name}</option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
 
                 <div>

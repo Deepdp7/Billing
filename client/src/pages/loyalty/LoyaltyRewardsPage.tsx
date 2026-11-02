@@ -7,6 +7,7 @@ import {
   Settings, Search, RefreshCw, CheckCircle2, AlertCircle, Plus,
   ShieldAlert, Sparkles, Filter, ChevronRight
 } from 'lucide-react';
+import { Select } from '../../components/ui/Select.js';
 
 export const LoyaltyRewardsPage: React.FC = () => {
   const { t } = useLanguage();
@@ -453,7 +454,7 @@ export const LoyaltyRewardsPage: React.FC = () => {
             </div>
 
             {/* Filter */}
-            <select
+            <Select
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
               className="text-xs px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
@@ -462,7 +463,7 @@ export const LoyaltyRewardsPage: React.FC = () => {
               <option value="EARNED">Earned (+)</option>
               <option value="REDEEMED">Redeemed (-)</option>
               <option value="ADJUSTED">Adjusted</option>
-            </select>
+            </Select>
           </div>
 
           <div className="divide-y divide-slate-100 dark:divide-slate-800/60 overflow-y-auto max-h-[500px]">
@@ -579,7 +580,7 @@ export const LoyaltyRewardsPage: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Adjustment Action
                 </label>
-                <select
+                <Select
                   value={adjustData.type}
                   onChange={(e: any) => setAdjustData({ ...adjustData, type: e.target.value })}
                   className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -587,7 +588,7 @@ export const LoyaltyRewardsPage: React.FC = () => {
                   <option value="EARNED">Credit Points (+)</option>
                   <option value="REDEEMED">Debit / Redeem Points (-)</option>
                   <option value="ADJUSTED">Manual Balance Correction</option>
-                </select>
+                </Select>
               </div>
 
               <div>

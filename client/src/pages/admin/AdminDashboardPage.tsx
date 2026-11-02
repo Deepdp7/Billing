@@ -7,6 +7,7 @@ import {
   Search, ToggleLeft, ToggleRight, CheckCircle2, AlertOctagon, 
   Edit3, Save, X, RefreshCw 
 } from 'lucide-react';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 
 export const AdminDashboardPage: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
@@ -46,7 +47,7 @@ export const AdminDashboardPage: React.FC = () => {
 
   const handleToggleStatus = async (id: string, currentStatus: string, bizName: string) => {
     const newStatus = currentStatus === 'ACTIVE' ? 'SUSPENDED' : 'ACTIVE';
-    if (!window.confirm(`Change status of "${bizName}" to ${newStatus}?`)) return;
+    if (!(await confirmDialog(`Change status of "${bizName}" to ${newStatus}?`))) return;
 
     try {
       await api.updateBusinessStatus(id, newStatus);
@@ -54,7 +55,7 @@ export const AdminDashboardPage: React.FC = () => {
       setTimeout(() => setStatusMsg(''), 4000);
       loadAdminData();
     } catch (err: any) {
-      alert(err.message || 'Failed to update status');
+      showAlert(err.message || 'Failed to update status');
     }
   };
 
@@ -80,7 +81,7 @@ export const AdminDashboardPage: React.FC = () => {
       setTimeout(() => setStatusMsg(''), 4000);
       loadAdminData();
     } catch (err: any) {
-      alert(err.message || 'Failed to update plan');
+      showAlert(err.message || 'Failed to update plan');
     }
   };
 

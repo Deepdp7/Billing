@@ -7,6 +7,8 @@ import {
   RefreshCw, CheckCircle2, AlertCircle, Trash2, ArrowUpRight,
   TrendingDown, ShieldAlert, DollarSign, Users, ChevronRight, X
 } from 'lucide-react';
+import { confirmDialog } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const WholesalePage: React.FC = () => {
   const { t } = useLanguage();
@@ -118,7 +120,7 @@ export const WholesalePage: React.FC = () => {
   };
 
   const handleDeleteSlab = async (id: string) => {
-    if (!confirm('Are you sure you want to remove this pricing tier?')) return;
+    if (!(await confirmDialog('Are you sure you want to remove this pricing tier?', { danger: true }))) return;
     try {
       await api.deleteBulkSlab(id);
       setNotification({ type: 'success', message: 'Price slab removed' });
@@ -610,7 +612,7 @@ export const WholesalePage: React.FC = () => {
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Product
                 </label>
-                <select
+                <Select
                   value={slabForm.productId}
                   onChange={(e) => {
                     const pid = e.target.value;
@@ -629,7 +631,7 @@ export const WholesalePage: React.FC = () => {
                       {p.name} (Std: ₹{((p.sale_price_paise || 0) / 100).toFixed(2)})
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -790,7 +792,7 @@ export const WholesalePage: React.FC = () => {
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Customer Type
                 </label>
-                <select
+                <Select
                   value={creditForm.customerType}
                   onChange={(e) => setCreditForm({ ...creditForm, customerType: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -798,7 +800,7 @@ export const WholesalePage: React.FC = () => {
                   <option value="WHOLESALE">Wholesale Dealer / Party</option>
                   <option value="DISTRIBUTOR">Master Distributor</option>
                   <option value="RETAIL">Standard Retail</option>
-                </select>
+                </Select>
               </div>
 
               <div>
@@ -941,7 +943,7 @@ export const WholesalePage: React.FC = () => {
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Transaction Type
                 </label>
-                <select
+                <Select
                   value={ledgerEntryForm.entryType}
                   onChange={(e) => setLedgerEntryForm({ ...ledgerEntryForm, entryType: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -950,7 +952,7 @@ export const WholesalePage: React.FC = () => {
                   <option value="INVOICE_DEBIT">Invoice Billing (Debit +)</option>
                   <option value="RETURN_CREDIT">Goods Return (Credit -)</option>
                   <option value="ADJUSTMENT">Balance Adjustment</option>
-                </select>
+                </Select>
               </div>
 
               <div>

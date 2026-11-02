@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { OnlineOrder, OnlineOrderStatus, OnlineStoreConfig } from '../../types/index.js';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export function OnlineOrdersPage() {
   const [orders, setOrders] = useState<OnlineOrder[]>([]);
@@ -104,9 +106,9 @@ export function OnlineOrdersPage() {
       const res = await api.updateStoreConfig(formData);
       setStoreConfig(res.store);
       setIsSettingsOpen(false);
-      alert('Storefront settings updated successfully!');
+      showAlert('Storefront settings updated successfully!');
     } catch (err: any) {
-      alert(err.message || 'Failed to update store settings');
+      showAlert(err.message || 'Failed to update store settings');
     } finally {
       setIsActionLoading(false);
     }
@@ -119,7 +121,7 @@ export function OnlineOrdersPage() {
       setOrderItems(res.items || []);
       setIsDetailModalOpen(true);
     } catch (err: any) {
-      alert(err.message || 'Failed to fetch order details');
+      showAlert(err.message || 'Failed to fetch order details');
     }
   };
 
@@ -131,25 +133,25 @@ export function OnlineOrdersPage() {
         setSelectedOrder((prev) => (prev ? { ...prev, status: newStatus as OnlineOrderStatus } : null));
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to update status');
+      showAlert(err.message || 'Failed to update status');
     }
   };
 
   const handleConvertToInvoice = async (order: OnlineOrder) => {
-    if (!window.confirm(`Convert order ${order.order_number} to a completed POS Invoice and automatically deduct product stock?`)) {
+    if (!(await confirmDialog(`Convert order ${order.order_number} to a completed POS Invoice and automatically deduct product stock?`))) {
       return;
     }
 
     setIsActionLoading(true);
     try {
       const res = await api.convertOrderToInvoice(order.id);
-      alert(`Success! POS Invoice ${res.invoiceNumber} generated and stock deducted.`);
+      showAlert(`Success! POS Invoice ${res.invoiceNumber} generated and stock deducted.`);
       loadData();
       if (isDetailModalOpen) {
         setIsDetailModalOpen(false);
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to convert order to invoice');
+      showAlert(err.message || 'Failed to convert order to invoice');
     } finally {
       setIsActionLoading(false);
     }
@@ -626,7 +628,7 @@ export function OnlineOrdersPage() {
               {/* Status Update Dropdown */}
               <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
                 <span className="font-semibold text-slate-700 dark:text-slate-300">Update Order State:</span>
-                <select
+                <Select
                   value={selectedOrder.status}
                   onChange={(e) => handleUpdateStatus(selectedOrder.id, e.target.value)}
                   className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-xs focus:ring-1 focus:ring-emerald-500"
@@ -637,7 +639,7 @@ export function OnlineOrdersPage() {
                   <option value="OUT_FOR_DELIVERY">OUT_FOR_DELIVERY</option>
                   <option value="COMPLETED">COMPLETED</option>
                   <option value="CANCELLED">CANCELLED</option>
-                </select>
+                </Select>
               </div>
             </div>
 

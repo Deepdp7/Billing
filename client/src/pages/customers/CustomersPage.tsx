@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../../lib/api.js';
+import { api, downloadFile } from '../../lib/api.js';
 import { Customer, Invoice } from '../../types/index.js';
 import { formatINR, formatDate, rupeesToPaise } from '../../lib/utils.js';
 import { 
   Users, Plus, Search, Phone, Mail, MapPin, 
-  CreditCard, Eye, X, Check 
+  CreditCard, Eye, X, Check, Pencil, Trash2, IndianRupee, Download
 } from 'lucide-react';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const CustomersPage: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -20,6 +22,17 @@ export const CustomersPage: React.FC = () => {
   const [gstin, setGstin] = useState('');
   const [address, setAddress] = useState('');
   const [creditLimitRupees, setCreditLimitRupees] = useState('10000');
+  const [custState, setCustState] = useState('');
+  const [shippingAddress, setShippingAddress] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Ledger & payments
+  const [ledger, setLedger] = useState<any | null>(null);
+  const [payCustomer, setPayCustomer] = useState<Customer | null>(null);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMode, setPayMode] = useState('CASH');
+  const [payRef, setPayRef] = useState('');
+  const [notice, setNotice] = useState('');
 
   // Customer Statement Modal
   const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null);
@@ -46,33 +59,93 @@ export const CustomersPage: React.FC = () => {
     if (!name.trim()) return;
 
     try {
-      await api.createCustomer({
+      const data = {
         name,
         phone,
         email,
-        gstin,
-        address,
+        gstin: gstin.trim().toUpperCase(),
+        billingAddress: address,
+        shippingAddress: shippingAddress || undefined,
+        state: custState || undefined,
         creditLimitPaise: rupeesToPaise(creditLimitRupees),
-      });
+      };
+      if (editingId) await api.updateCustomer(editingId, data);
+      else await api.createCustomer(data);
       setIsAddModalOpen(false);
+      setEditingId(null);
       setName('');
       setPhone('');
       setEmail('');
       setGstin('');
       setAddress('');
+      setShippingAddress('');
+      setCustState('');
       loadCustomers();
     } catch (err: any) {
-      alert(err.message || 'Failed to create customer');
+      showAlert(err.message || 'Failed to create customer');
+    }
+  };
+
+  const openEdit = (c: any) => {
+    setEditingId(c.id);
+    setName(c.name || '');
+    setPhone(c.phone || '');
+    setEmail(c.email || '');
+    setGstin(c.gstin || '');
+    setAddress(c.billing_address || c.address || '');
+    setShippingAddress(c.shipping_address || '');
+    setCustState(c.state || '');
+    setCreditLimitRupees(String((c.credit_limit_paise || 0) / 100));
+    setIsAddModalOpen(true);
+  };
+
+  const removeCustomer = async (c: Customer) => {
+    if (!(await confirmDialog(`Delete ${c.name}?`, { danger: true }))) return;
+    try {
+      await api.deleteCustomer(c.id);
+      setNotice(`${c.name} deleted.`);
+      loadCustomers();
+    } catch (err: any) {
+      if (err.code === 'HAS_HISTORY' && (await confirmDialog(`${err.message}\n\nDeactivate ${c.name} instead? Their invoices stay intact.`, { danger: true }))) {
+        await api.deleteCustomer(c.id, true);
+        setNotice(`${c.name} deactivated.`);
+        loadCustomers();
+      } else if (err.code !== 'HAS_HISTORY') {
+        showAlert(err.message || 'Failed to delete customer');
+      }
+    }
+  };
+
+  const receivePayment = async () => {
+    if (!payCustomer) return;
+    try {
+      const r = await api.receiveCustomerPayment(payCustomer.id, { amountPaise: rupeesToPaise(payAmount), mode: payMode, reference: payRef || undefined });
+      const parts = r.allocations.map((a: any) => `${a.invoiceNumber}: ${formatINR(a.amountPaise)}`);
+      if (r.advancePaise > 0) parts.push(`advance ${formatINR(r.advancePaise)}`);
+      setNotice(`Payment recorded for ${payCustomer.name} — ${parts.join(', ')}`);
+      setPayCustomer(null);
+      loadCustomers();
+    } catch (err: any) {
+      showAlert(err.message || 'Failed to record payment');
+    }
+  };
+
+  const exportCustomers = async (format: 'csv' | 'xlsx') => {
+    try {
+      await downloadFile(`/app/customers/export?format=${format}`, `customers.${format}`);
+    } catch (err: any) {
+      showAlert(err.message || 'Export failed');
     }
   };
 
   const viewStatement = async (c: Customer) => {
     try {
-      const res = await api.getCustomerById(c.id);
+      const [res, led] = await Promise.all([api.getCustomerById(c.id), api.getCustomerLedger(c.id)]);
       setStatementCustomer(res.customer);
       setStatementInvoices(res.invoices);
+      setLedger(led);
     } catch (err: any) {
-      alert(err.message || 'Failed to load customer statement');
+      showAlert(err.message || 'Failed to load customer statement');
     }
   };
 
@@ -89,14 +162,25 @@ export const CustomersPage: React.FC = () => {
           </p>
         </div>
 
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <button onClick={() => exportCustomers('xlsx')} className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50">
+          <Download className="w-3.5 h-3.5" /><span>Export</span>
+        </button>
         <button
-          onClick={() => setIsAddModalOpen(true)}
+          onClick={() => { setEditingId(null); setIsAddModalOpen(true); }}
           className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md shadow-emerald-500/25 transition active:scale-95 self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />
           <span>Add New Customer</span>
         </button>
+        </div>
       </div>
+
+      {notice && (
+        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-xs rounded-xl flex items-center gap-2">
+          <Check className="w-4 h-4 shrink-0" /><span className="flex-1">{notice}</span><button onClick={() => setNotice('')}>✕</button>
+        </div>
+      )}
 
       {/* Filter */}
       <div className="p-3 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center">
@@ -156,6 +240,16 @@ export const CustomersPage: React.FC = () => {
                     >
                       <Eye className="w-3.5 h-3.5" />
                     </button>
+                    <button onClick={() => { setPayCustomer(c); setPayAmount(c.outstanding_balance_paise > 0 ? (c.outstanding_balance_paise / 100).toFixed(2) : ''); setPayMode('CASH'); setPayRef(''); }}
+                      className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-slate-800 text-slate-500 hover:text-emerald-600 transition" title="Receive Payment">
+                      <IndianRupee className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => openEdit(c)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-indigo-600 transition" title="Edit Customer">
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button onClick={() => removeCustomer(c)} className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-slate-800 text-slate-400 hover:text-red-600 transition" title="Delete Customer">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </td>
                 </tr>
               ))
@@ -175,8 +269,8 @@ export const CustomersPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-              <h3 className="font-bold text-base text-slate-900 dark:text-white">Add New Customer</h3>
-              <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <h3 className="font-bold text-base text-slate-900 dark:text-white">{editingId ? 'Edit Customer' : 'Add New Customer'}</h3>
+              <button onClick={() => { setIsAddModalOpen(false); setEditingId(null); }} className="text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -252,6 +346,19 @@ export const CustomersPage: React.FC = () => {
                 />
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Shipping Address</label>
+                  <input type="text" placeholder="If different from billing" value={shippingAddress} onChange={(e) => setShippingAddress(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">State (for GST)</label>
+                  <input type="text" placeholder="e.g. Maharashtra" value={custState} onChange={(e) => setCustState(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500" />
+                </div>
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
@@ -268,6 +375,27 @@ export const CustomersPage: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Receive Payment Modal */}
+      {payCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-3">
+            <h3 className="font-bold text-base text-slate-900 dark:text-white">Receive payment — {payCustomer.name}</h3>
+            <p className="text-xs text-slate-500">Outstanding {formatINR(payCustomer.outstanding_balance_paise)}. The oldest unpaid invoices are settled first; any extra is kept as advance.</p>
+            <input type="number" min="0" step="0.01" placeholder="Amount ₹" value={payAmount} onChange={(e) => setPayAmount(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs" />
+            <Select value={payMode} onChange={(e) => setPayMode(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs">
+              {['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE', 'WALLET'].map((m) => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+            </Select>
+            <input placeholder="Reference (optional)" value={payRef} onChange={(e) => setPayRef(e.target.value)}
+              className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs" />
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setPayCustomer(null)} className="px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 rounded-xl">Cancel</button>
+              <button onClick={receivePayment} disabled={!(parseFloat(payAmount) > 0)} className="px-5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl disabled:opacity-50">Record Payment</button>
+            </div>
           </div>
         </div>
       )}
@@ -291,6 +419,26 @@ export const CustomersPage: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2">
+              {ledger && (
+                <div className="mb-4">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Ledger (debit = billed, credit = received)</h4>
+                  <table className="w-full text-[11px]">
+                    <thead className="text-slate-400 text-left"><tr><th className="py-1">Date</th><th>Type</th><th>Ref</th><th className="text-right">Debit</th><th className="text-right">Credit</th><th className="text-right">Balance</th></tr></thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {ledger.entries.map((e: any, i: number) => (
+                        <tr key={i}>
+                          <td className="py-1">{formatDate(e.date)}</td><td>{e.type.replace('_', ' ')}</td><td className="font-mono">{e.reference || '-'}</td>
+                          <td className="text-right font-mono">{e.debit ? formatINR(e.debit) : ''}</td>
+                          <td className="text-right font-mono">{e.credit ? formatINR(e.credit) : ''}</td>
+                          <td className="text-right font-mono font-bold">{formatINR(e.balance)}</td>
+                        </tr>
+                      ))}
+                      {ledger.entries.length === 0 && <tr><td colSpan={6} className="py-2 text-slate-400">No transactions yet.</td></tr>}
+                    </tbody>
+                  </table>
+                  <div className="text-right text-xs font-bold mt-1">Closing balance: {formatINR(ledger.closingBalancePaise)}</div>
+                </div>
+              )}
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Transaction History</h4>
               {statementInvoices.length > 0 ? (
                 statementInvoices.map((inv) => (

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Invoice } from '../../types/index.js';
 import { formatINR, formatDateTime } from '../../lib/utils.js';
+import { saveAsPdf } from '../../lib/api.js';
 import { Printer, Download, X, CheckCircle, FileText, Smartphone } from 'lucide-react';
 
 interface InvoiceModalProps {
@@ -17,14 +18,21 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
     window.print();
   };
 
-  const business = invoice.business || {
-    name: 'Apna Supermart & Retail',
-    gstin: '27AABCA1234A1Z5',
-    address: 'Shop 12-14, Sunrise Plaza, MG Road',
-    city: 'Pune',
-    state: 'Maharashtra',
-    phone: '+91 9823012345',
+  const [pdfMsg, setPdfMsg] = useState('');
+  const handlePdf = async () => {
+    setPdfMsg('');
+    try {
+      const r = await saveAsPdf(`Invoice-${invoice.invoice_number}.pdf`);
+      if (r === 'saved') setPdfMsg('PDF saved');
+    } catch (err: any) {
+      setPdfMsg(err.message || 'PDF export failed');
+    }
   };
+
+  // Business details always come from this installation's own profile (never a hard-coded placeholder).
+  const inv: any = invoice;
+  const business: any = inv.business || {};
+  const balanceDue = inv.status === 'ISSUED' ? Math.max(0, invoice.total_paise - invoice.amount_paid_paise) : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
@@ -65,6 +73,16 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
             </div>
 
             <button
+              onClick={handlePdf}
+              className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold px-3 py-1.5 rounded-lg transition"
+              title="Save as PDF"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>PDF</span>
+            </button>
+            {pdfMsg && <span className="text-[11px] text-slate-500">{pdfMsg}</span>}
+
+            <button
               onClick={handlePrint}
               className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg transition"
             >
@@ -89,7 +107,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
             <div className="print-area bg-white text-black p-5 rounded-lg shadow-md border border-slate-200 w-80 font-mono text-[11px] leading-tight select-text">
               <div className="text-center pb-3 border-b border-dashed border-gray-400 space-y-1">
                 <h2 className="text-base font-extrabold uppercase tracking-wide">{business.name}</h2>
-                <p className="text-[10px] text-gray-700">{business.address}, {business.city}</p>
+                <p className="text-[10px] text-gray-700">{[business.address, business.city].filter(Boolean).join(', ')}</p>
                 {business.gstin && <p className="text-[10px] font-bold">GSTIN: {business.gstin}</p>}
                 {business.phone && <p className="text-[10px]">Ph: {business.phone}</p>}
                 <div className="pt-1 text-[11px] font-bold border-t border-dashed border-gray-300">
@@ -166,6 +184,12 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
                     <span>{formatINR(invoice.igst_paise)}</span>
                   </div>
                 )}
+                {inv.round_off_paise ? (
+                  <div className="flex justify-between text-gray-600 text-[10px]">
+                    <span>Round-off:</span>
+                    <span>{formatINR(inv.round_off_paise)}</span>
+                  </div>
+                ) : null}
                 <div className="flex justify-between text-sm font-black pt-1 border-t border-gray-400">
                   <span>GRAND TOTAL:</span>
                   <span>{formatINR(invoice.total_paise)}</span>
@@ -174,23 +198,18 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
                   <span>Paid ({invoice.payment_mode}):</span>
                   <span>{formatINR(invoice.amount_paid_paise)}</span>
                 </div>
-              </div>
-
-              {/* UPI QR Mockup */}
-              <div className="py-3 text-center border-b border-dashed border-gray-400 flex flex-col items-center">
-                <div className="w-24 h-24 bg-white border border-gray-300 p-1 rounded flex items-center justify-center">
-                  <div className="grid grid-cols-4 gap-0.5 w-full h-full p-1 bg-black/5">
-                    {Array.from({ length: 16 }).map((_, i) => (
-                      <div key={i} className={`rounded-xs ${i % 2 === 0 ? 'bg-black' : 'bg-transparent'}`} />
-                    ))}
+                {balanceDue > 0 && (
+                  <div className="flex justify-between text-[10px] font-bold">
+                    <span>Balance due:</span>
+                    <span>{formatINR(balanceDue)}</span>
                   </div>
-                </div>
-                <span className="text-[9px] text-gray-600 mt-1 font-sans">Scan with any UPI App</span>
+                )}
               </div>
+              {inv.status === 'CANCELLED' && <div className="py-2 text-center font-black text-red-600 border-b border-dashed border-gray-400">CANCELLED</div>}
 
               <div className="pt-3 text-center text-[10px] text-gray-600 space-y-0.5">
-                <p className="font-semibold">Thank you for shopping with us!</p>
-                <p>Goods once sold can be exchanged within 7 days.</p>
+                <p className="font-semibold">{inv.footer || 'Thank you for your business!'}</p>
+                {inv.terms && <p>{inv.terms}</p>}
                 <p className="text-[8px] text-gray-400">Powered by Apna Billing</p>
               </div>
             </div>
@@ -203,7 +222,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
               <div className="flex justify-between items-start pb-4 border-b-2 border-slate-800">
                 <div>
                   <h1 className="text-xl font-black text-slate-900 uppercase tracking-tight">{business.name}</h1>
-                  <p className="text-slate-600">{business.address}, {business.city}, {business.state}</p>
+                  <p className="text-slate-600">{[business.address, business.city, business.state, business.pincode].filter(Boolean).join(', ')}</p>
                   <p className="font-semibold text-slate-700">GSTIN: {business.gstin || 'Unregistered'}</p>
                   <p className="text-slate-600">Contact: {business.phone}</p>
                 </div>
@@ -213,7 +232,9 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
                   </div>
                   <p className="font-bold">Invoice #: {invoice.invoice_number}</p>
                   <p className="text-slate-600">Date: {invoice.invoice_date}</p>
-                  <p className="text-slate-600">Place of Supply: {business.state}</p>
+                  <p className="text-slate-600">Place of Supply: {inv.place_of_supply || business.state}</p>
+                  {inv.due_date && balanceDue > 0 && <p className="text-slate-600">Due: {inv.due_date}</p>}
+                  {inv.status === 'CANCELLED' && <p className="font-black text-red-600">CANCELLED</p>}
                 </div>
               </div>
 
@@ -224,12 +245,15 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
                   <h4 className="font-bold text-sm text-slate-800">{invoice.customer_name}</h4>
                   {invoice.customer_phone && <p className="text-slate-600">Phone: {invoice.customer_phone}</p>}
                   {invoice.customer_gstin && <p className="font-semibold text-slate-700">GSTIN: {invoice.customer_gstin}</p>}
+                  {inv.billing_address && <p className="text-slate-600">{inv.billing_address}</p>}
+                  {inv.shipping_address && <p className="text-slate-500 text-[11px]">Ship to: {inv.shipping_address}</p>}
                 </div>
                 <div className="text-right">
                   <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">Payment Details</span>
                   <p className="font-bold text-slate-800">Mode: {invoice.payment_mode}</p>
                   <p className="text-emerald-700 font-semibold">Status: {invoice.payment_status}</p>
                   <p className="text-slate-600">Paid: {formatINR(invoice.amount_paid_paise)}</p>
+                  {balanceDue > 0 && <p className="font-bold text-slate-800">Balance due: {formatINR(balanceDue)}</p>}
                 </div>
               </div>
 
@@ -268,16 +292,13 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
                 <div className="space-y-2">
                   <div className="text-[11px] bg-slate-50 p-2.5 rounded border border-slate-200">
                     <span className="font-bold text-slate-700 block mb-1">Terms & Conditions:</span>
-                    <ol className="list-decimal pl-4 space-y-0.5 text-slate-500 text-[10px]">
-                      <li>Goods once sold will not be taken back without original bill.</li>
-                      <li>Disputes subject to local jurisdiction.</li>
-                    </ol>
+                    <p className="text-slate-500 text-[10px] whitespace-pre-line">{inv.terms || 'Goods once sold will not be taken back without the original invoice.'}</p>
                   </div>
                 </div>
 
                 <div className="space-y-1.5 text-xs bg-slate-50 p-3 rounded border border-slate-200">
                   <div className="flex justify-between">
-                    <span className="text-slate-600">Taxable Subtotal:</span>
+                    <span className="text-slate-600">Subtotal:</span>
                     <span className="font-semibold">{formatINR(invoice.subtotal_paise)}</span>
                   </div>
                   {invoice.discount_paise > 0 && (
@@ -286,14 +307,27 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
                       <span>-{formatINR(invoice.discount_paise)}</span>
                     </div>
                   )}
-                  <div className="flex justify-between text-slate-600">
-                    <span>CGST:</span>
-                    <span>{formatINR(invoice.cgst_paise)}</span>
-                  </div>
-                  <div className="flex justify-between text-slate-600">
-                    <span>SGST:</span>
-                    <span>{formatINR(invoice.sgst_paise)}</span>
-                  </div>
+                  {invoice.igst_paise > 0 ? (
+                    <div className="flex justify-between text-slate-600">
+                      <span>IGST:</span>
+                      <span>{formatINR(invoice.igst_paise)}</span>
+                    </div>
+                  ) : (<>
+                    <div className="flex justify-between text-slate-600">
+                      <span>CGST:</span>
+                      <span>{formatINR(invoice.cgst_paise)}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>SGST:</span>
+                      <span>{formatINR(invoice.sgst_paise)}</span>
+                    </div>
+                  </>)}
+                  {inv.round_off_paise ? (
+                    <div className="flex justify-between text-slate-600">
+                      <span>Round-off:</span>
+                      <span>{formatINR(inv.round_off_paise)}</span>
+                    </div>
+                  ) : null}
                   <div className="flex justify-between border-t-2 border-slate-900 pt-2 text-sm font-black text-slate-900">
                     <span>Invoice Total:</span>
                     <span>{formatINR(invoice.total_paise)}</span>

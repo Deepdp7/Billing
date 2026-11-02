@@ -1,35 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { formatINR } from '../../lib/utils.js';
+import { ReportExplorer } from './ReportExplorer.js';
 import { 
   BarChart3, FileSpreadsheet, TrendingUp, TrendingDown, 
   DollarSign, Calculator, Download, RefreshCw 
 } from 'lucide-react';
 
 export const ReportsPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'pnl' | 'gst'>('pnl');
+  const [activeTab, setActiveTab] = useState<'pnl' | 'gst' | 'all'>('pnl');
+  const [fromDate, setFromDate] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`; });
+  const [toDate, setToDate] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [pnlData, setPnlData] = useState<any>(null);
   const [gstData, setGstData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadReports();
-  }, []);
+  }, [fromDate, toDate]);
 
+  // Loaded independently: a report not included in the license must not break the other one.
   const loadReports = async () => {
-    try {
-      setLoading(true);
-      const [pnl, gst] = await Promise.all([
-        api.getProfitAndLoss(),
-        api.getGstSummary(),
-      ]);
-      setPnlData(pnl);
-      setGstData(gst);
-    } catch (err) {
-      console.error('Failed to load reports', err);
-    } finally {
-      setLoading(false);
-    }
+    setLoading(true);
+    const range = { fromDate: fromDate || undefined, toDate: toDate || undefined };
+    const [pnl, gst] = await Promise.allSettled([api.getProfitAndLoss(range), api.getGstSummary(range)]);
+    setPnlData(pnl.status === 'fulfilled' ? pnl.value : null);
+    setGstData(gst.status === 'fulfilled' ? gst.value : null);
+    setLoadError([pnl, gst].filter((r) => r.status === 'rejected').map((r: any) => r.reason?.message).join(' · '));
+    setLoading(false);
   };
 
   const isProfitable = (pnlData?.netProfitPaise || 0) >= 0;
@@ -47,6 +46,12 @@ export const ReportsPage: React.FC = () => {
           </p>
         </div>
 
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} title="From"
+          className="text-xs px-2 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700" />
+        <span className="text-xs text-slate-400">to</span>
+        <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} title="To"
+          className="text-xs px-2 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700" />
         <button
           onClick={loadReports}
           className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 transition shadow-sm self-start sm:self-auto"
@@ -54,7 +59,9 @@ export const ReportsPage: React.FC = () => {
           <RefreshCw className="w-3.5 h-3.5" />
           <span>Recalculate</span>
         </button>
+        </div>
       </div>
+      {loadError && <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">{loadError}</div>}
 
       {/* Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800">
@@ -81,7 +88,21 @@ export const ReportsPage: React.FC = () => {
           <FileSpreadsheet className="w-4 h-4" />
           <span>GST Compliance Summary (GSTR-1)</span>
         </button>
+
+        <button
+          onClick={() => setActiveTab('all')}
+          className={`pb-2.5 text-xs font-bold transition flex items-center gap-2 border-b-2 ${
+            activeTab === 'all'
+              ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400'
+              : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>All Reports & Exports</span>
+        </button>
       </div>
+
+      {activeTab === 'all' && <ReportExplorer fromDate={fromDate} toDate={toDate} />}
 
       {/* 1. Profit & Loss Statement */}
       {activeTab === 'pnl' && (

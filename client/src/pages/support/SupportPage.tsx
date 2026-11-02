@@ -13,6 +13,7 @@ import {
   AlertCircle,
   FileText
 } from 'lucide-react';
+import { Select } from '../../components/ui/Select.js';
 
 export const SupportPage: React.FC = () => {
   const [faqs, setFaqs] = useState<any[]>([]);
@@ -273,7 +274,7 @@ export const SupportPage: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">Priority Level</label>
-                <select
+                <Select
                   value={priority}
                   onChange={(e) => setPriority(e.target.value)}
                   className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
@@ -282,7 +283,7 @@ export const SupportPage: React.FC = () => {
                   <option value="MEDIUM">Medium - Setup Help</option>
                   <option value="HIGH">High - Billing Interruption</option>
                   <option value="CRITICAL">Critical - System Offline</option>
-                </select>
+                </Select>
               </div>
 
               <div>

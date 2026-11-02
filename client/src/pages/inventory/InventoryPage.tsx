@@ -6,6 +6,8 @@ import {
   Warehouse, AlertTriangle, ArrowUpDown, PlusCircle, 
   MinusCircle, History, CheckCircle, X, Search 
 } from 'lucide-react';
+import { showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const InventoryPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -63,7 +65,7 @@ export const InventoryPage: React.FC = () => {
       setNotes('');
       loadInventory();
     } catch (err: any) {
-      alert(err.message || 'Stock adjustment failed');
+      showAlert(err.message || 'Stock adjustment failed');
     }
   };
 
@@ -266,7 +268,7 @@ export const InventoryPage: React.FC = () => {
             <form onSubmit={handleAdjustSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Select Product *</label>
-                <select
+                <Select
                   required
                   value={selectedProductId}
                   onChange={(e) => setSelectedProductId(e.target.value)}
@@ -277,7 +279,7 @@ export const InventoryPage: React.FC = () => {
                       {p.name} (Current: {p.stock_quantity} {p.unit})
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -321,7 +323,7 @@ export const InventoryPage: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Reason Code</label>
-                <select
+                <Select
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
                   className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
@@ -331,7 +333,7 @@ export const InventoryPage: React.FC = () => {
                   <option value="EXPIRED">Expired Batch</option>
                   <option value="AUDIT">Inventory Audit Discrepancy</option>
                   <option value="RETURN">Customer Return</option>
-                </select>
+                </Select>
               </div>
 
               <div>

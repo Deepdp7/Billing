@@ -9,6 +9,7 @@ import {
   Plus, Search, RefreshCw, CheckCircle2, AlertCircle, Clock, 
   Smartphone, Scale, Cpu, Check, X, ChevronRight, User, Phone
 } from 'lucide-react';
+import { Select } from '../../components/ui/Select.js';
 
 export const ServiceBusinessPage: React.FC = () => {
   const { t } = useLanguage();
@@ -601,7 +602,7 @@ export const ServiceBusinessPage: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Printer Paper Width
                 </label>
-                <select
+                <Select
                   value={hardwareSettings.printerType}
                   onChange={(e: any) => setHardwareSettings({ ...hardwareSettings, printerType: e.target.value })}
                   className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -609,14 +610,14 @@ export const ServiceBusinessPage: React.FC = () => {
                   <option value="THERMAL_80MM">80mm Standard POS Thermal Receipt (3-inch)</option>
                   <option value="THERMAL_58MM">58mm Compact POS Thermal Receipt (2-inch)</option>
                   <option value="LASER_A4">Standard A4 / Laser Jet Page</option>
-                </select>
+                </Select>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Printer Interface Mode
                 </label>
-                <select
+                <Select
                   value={hardwareSettings.printerInterface}
                   onChange={(e: any) => setHardwareSettings({ ...hardwareSettings, printerInterface: e.target.value })}
                   className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -624,7 +625,7 @@ export const ServiceBusinessPage: React.FC = () => {
                   <option value="BROWSER_POPUP">Direct Browser Print Engine (Recommended)</option>
                   <option value="RAW_BT">RawBT Thermal Service (Android / Mobile USB/BT)</option>
                   <option value="NETWORK_ESC_POS">Network TCP/IP ESC/POS Port 9100</option>
-                </select>
+                </Select>
               </div>
 
               <div className="space-y-2 pt-2">
@@ -671,7 +672,7 @@ export const ServiceBusinessPage: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Serial COM Baud Rate
                 </label>
-                <select
+                <Select
                   value={hardwareSettings.weighingScaleBaudRate}
                   onChange={(e) => setHardwareSettings({ ...hardwareSettings, weighingScaleBaudRate: Number(e.target.value) })}
                   className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -679,7 +680,7 @@ export const ServiceBusinessPage: React.FC = () => {
                   <option value={9600}>9600 bps (Standard Indian Scales)</option>
                   <option value={4800}>4800 bps</option>
                   <option value={19200}>19200 bps</option>
-                </select>
+                </Select>
                 <p className="text-[11px] text-slate-400 mt-1">
                   Supports Avery Berkel, Essae, Eagle, and Phoenix serial protocols via Web Serial API.
                 </p>
@@ -698,7 +699,7 @@ export const ServiceBusinessPage: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Gateway Provider
                   </label>
-                  <select
+                  <Select
                     value={hardwareSettings.smsGatewayProvider}
                     onChange={(e: any) => setHardwareSettings({ ...hardwareSettings, smsGatewayProvider: e.target.value })}
                     className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -706,7 +707,7 @@ export const ServiceBusinessPage: React.FC = () => {
                     <option value="WHATSAPP_DIRECT">Direct WhatsApp App / Web (Zero-Cost)</option>
                     <option value="TWILIO">Twilio SMS Gateway API</option>
                     <option value="FAST2SMS">Fast2SMS Indian DLT Route</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
@@ -1058,7 +1059,7 @@ export const ServiceBusinessPage: React.FC = () => {
                 <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Customer / Client
                 </label>
-                <select
+                <Select
                   value={recForm.customerId}
                   onChange={(e) => {
                     const cid = e.target.value;
@@ -1071,7 +1072,7 @@ export const ServiceBusinessPage: React.FC = () => {
                   {customers.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
-                </select>
+                </Select>
               </div>
 
               <div>
@@ -1093,7 +1094,7 @@ export const ServiceBusinessPage: React.FC = () => {
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Billing Cycle
                   </label>
-                  <select
+                  <Select
                     value={recForm.frequency}
                     onChange={(e: any) => setRecForm({ ...recForm, frequency: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -1101,7 +1102,7 @@ export const ServiceBusinessPage: React.FC = () => {
                     <option value="MONTHLY">Monthly</option>
                     <option value="QUARTERLY">Quarterly</option>
                     <option value="ANNUAL">Annual</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div>

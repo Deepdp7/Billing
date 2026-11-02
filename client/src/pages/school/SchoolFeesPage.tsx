@@ -7,6 +7,7 @@ import {
   RefreshCw, CheckCircle2, AlertCircle, Printer, Filter, DollarSign,
   Calendar, Phone, UserCheck, BookOpen, ChevronRight, X
 } from 'lucide-react';
+import { Select } from '../../components/ui/Select.js';
 
 export const SchoolFeesPage: React.FC = () => {
   const { t } = useLanguage();
@@ -390,7 +391,7 @@ export const SchoolFeesPage: React.FC = () => {
           <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Filter Grade:</span>
-              <select
+              <Select
                 value={classFilter}
                 onChange={(e) => setClassFilter(e.target.value)}
                 className="text-xs px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
@@ -399,7 +400,7 @@ export const SchoolFeesPage: React.FC = () => {
                 {distinctClasses.map((cls) => (
                   <option key={cls} value={cls}>{cls}</option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             {/* Search */}
@@ -677,7 +678,7 @@ export const SchoolFeesPage: React.FC = () => {
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Fee Head / Tariff
                   </label>
-                  <select
+                  <Select
                     value={collectForm.feeStructureId}
                     onChange={(e) => setCollectForm({ ...collectForm, feeStructureId: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -688,7 +689,7 @@ export const SchoolFeesPage: React.FC = () => {
                         {fs.name} (₹{fs.amount})
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
@@ -711,7 +712,7 @@ export const SchoolFeesPage: React.FC = () => {
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Payment Mode
                   </label>
-                  <select
+                  <Select
                     value={collectForm.paymentMode}
                     onChange={(e: any) => setCollectForm({ ...collectForm, paymentMode: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -721,7 +722,7 @@ export const SchoolFeesPage: React.FC = () => {
                     <option value="CARD">Debit / Credit Card</option>
                     <option value="NET_BANKING">Net Banking / NEFT</option>
                     <option value="CHEQUE">Cheque / DD</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div>
@@ -990,7 +991,7 @@ export const SchoolFeesPage: React.FC = () => {
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Fee Type
                   </label>
-                  <select
+                  <Select
                     value={structureForm.feeType}
                     onChange={(e: any) => setStructureForm({ ...structureForm, feeType: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -1001,7 +1002,7 @@ export const SchoolFeesPage: React.FC = () => {
                     <option value="LAB">Lab & Science</option>
                     <option value="SPORTS">Sports & Activity</option>
                     <option value="TRANSPORT">Transport</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
 
@@ -1024,7 +1025,7 @@ export const SchoolFeesPage: React.FC = () => {
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Frequency
                   </label>
-                  <select
+                  <Select
                     value={structureForm.frequency}
                     onChange={(e: any) => setStructureForm({ ...structureForm, frequency: e.target.value })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100"
@@ -1033,7 +1034,7 @@ export const SchoolFeesPage: React.FC = () => {
                     <option value="QUARTERLY">Quarterly</option>
                     <option value="ANNUAL">Annual</option>
                     <option value="ONE_TIME">One-Time</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
 

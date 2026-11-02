@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Filter
 } from 'lucide-react';
+import { Select } from '../../components/ui/Select.js';
 
 export const AuditLogsPage: React.FC = () => {
   const [logs, setLogs] = useState<any[]>([]);
@@ -82,7 +83,7 @@ export const AuditLogsPage: React.FC = () => {
         </div>
 
         <div className="sm:w-60">
-          <select
+          <Select
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
             className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
@@ -91,7 +92,7 @@ export const AuditLogsPage: React.FC = () => {
             {uniqueActions.map(action => (
               <option key={action} value={action}>{action}</option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
 

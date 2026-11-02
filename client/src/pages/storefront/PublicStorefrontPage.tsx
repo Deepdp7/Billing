@@ -5,6 +5,7 @@ import {
   Store, AlertCircle, Sparkles, Tag, ChevronRight, X
 } from 'lucide-react';
 import { api } from '../../lib/api.js';
+import { showAlert } from '../../components/ui/dialogs.js';
 
 interface CartItem {
   product_id: string;
@@ -121,12 +122,12 @@ export function PublicStorefrontPage({ initialSlug = 'apna-supermart', onNavigat
   const handlePlaceOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customerName || !customerPhone || !deliveryAddress) {
-      alert('Please fill in your name, phone number, and delivery address.');
+      showAlert('Please fill in your name, phone number, and delivery address.');
       return;
     }
 
     if (cart.length === 0) {
-      alert('Your cart is empty.');
+      showAlert('Your cart is empty.');
       return;
     }
 
@@ -161,7 +162,7 @@ export function PublicStorefrontPage({ initialSlug = 'apna-supermart', onNavigat
       setCart([]);
       setIsCartOpen(false);
     } catch (err: any) {
-      alert(err.message || 'Failed to place order. Please check minimum order limit or try again.');
+      showAlert(err.message || 'Failed to place order. Please check minimum order limit or try again.');
     } finally {
       setIsSubmitting(false);
     }

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { UserCheck, Plus, Shield, UserX, X, CheckCircle, Mail, Phone } from 'lucide-react';
+import { showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
 
 export const StaffPage: React.FC = () => {
   const [staffList, setStaffList] = useState<any[]>([]);
@@ -38,7 +40,7 @@ export const StaffPage: React.FC = () => {
       setTimeout(() => setStatusMsg(''), 4000);
       loadStaff();
     } catch (err: any) {
-      alert(err.message || 'Failed to add staff');
+      showAlert(err.message || 'Failed to add staff');
     }
   };
 
@@ -48,7 +50,7 @@ export const StaffPage: React.FC = () => {
       await api.toggleStaffStatus(id, nextStatus);
       loadStaff();
     } catch (err: any) {
-      alert(err.message || 'Failed to update staff status');
+      showAlert(err.message || 'Failed to update staff status');
     }
   };
 
@@ -168,7 +170,7 @@ export const StaffPage: React.FC = () => {
 
                 <div>
                   <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">Assigned Role</label>
-                  <select
+                  <Select
                     value={role}
                     onChange={(e) => setRole(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
@@ -176,7 +178,7 @@ export const StaffPage: React.FC = () => {
                     <option value="CASHIER">Cashier (POS Only)</option>
                     <option value="ACCOUNTANT">Accountant (Ledgers & Bills)</option>
                     <option value="MANAGER">Store Manager (Full Store Access)</option>
-                  </select>
+                  </Select>
                 </div>
               </div>
 

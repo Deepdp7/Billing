@@ -6,6 +6,8 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
+  /** True only while the stored session is first being checked (not during login/register requests). */
+  initializing: boolean;
   login: (credentials: { email: string; password: string }) => Promise<void>;
   register: (data: any) => Promise<void>;
   quickDemoLogin: (type: 'grocery' | 'restaurant' | 'pharmacy' | 'clothing' | 'manufacturing' | 'school' | 'admin') => Promise<void>;
@@ -17,6 +19,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   token: null,
   isLoading: true,
+  initializing: true,
   login: async () => {},
   register: async () => {},
   quickDemoLogin: async () => {},
@@ -28,12 +31,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('apna_billing_token'));
   const [isLoading, setIsLoading] = useState(true);
+  const [initializing, setInitializing] = useState(true);
 
   const refreshUser = async () => {
     try {
       if (!token) {
         setUser(null);
         setIsLoading(false);
+        setInitializing(false);
         return;
       }
       const res = await api.getMe();
@@ -43,12 +48,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       logout();
     } finally {
       setIsLoading(false);
+      setInitializing(false);
     }
   };
 
   useEffect(() => {
     refreshUser();
   }, [token]);
+
+  useEffect(() => {
+    const onEnded = () => logout();
+    window.addEventListener('apna:session-ended', onEnded);
+    return () => window.removeEventListener('apna:session-ended', onEnded);
+  }, []);
 
   const login = async (credentials: { email: string; password: string }) => {
     setIsLoading(true);
@@ -100,6 +112,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         token,
         isLoading,
+        initializing,
         login,
         register,
         quickDemoLogin,

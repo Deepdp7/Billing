@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext.js';
 import { DashboardStats, Invoice } from '../../types/index.js';
 import { formatINR, formatDate, formatDateTime } from '../../lib/utils.js';
 import { InvoiceModal } from '../../components/billing/InvoiceModal.js';
+import { TrialActivateCard } from '../license/LicensePage.js';
 import { 
   TrendingUp, ShoppingBag, AlertTriangle, Users, 
   ArrowUpRight, Plus, Eye, UtensilsCrossed, Pill, 
@@ -75,6 +76,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
           </button>
         </div>
       </div>
+
+      <TrialActivateCard />
 
       {/* Category-Specific Dynamic Hero Widget (§4.1 & §5) */}
       {category === 'RESTAURANT' && (
@@ -203,6 +206,43 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
           </div>
         </div>
       </div>
+
+      {/* Month-to-date financials & sales trend (all computed from local records) */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        {[
+          { label: 'Purchases (month)', value: stats?.month?.purchasesPaise, tone: 'text-slate-900 dark:text-white' },
+          { label: 'Expenses (month)', value: stats?.month?.expensesPaise, tone: 'text-red-600 dark:text-red-400' },
+          { label: 'Gross profit (month)', value: stats?.month?.grossProfitPaise, tone: 'text-emerald-600 dark:text-emerald-400' },
+          { label: 'Net profit (month)', value: stats?.month?.netProfitPaise, tone: (stats?.month?.netProfitPaise || 0) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600' },
+          { label: 'Payable to suppliers', value: stats?.payablesPaise, tone: 'text-amber-600 dark:text-amber-400' },
+        ].map((c) => (
+          <div key={c.label} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{c.label}</div>
+            <div className={`text-lg font-black mt-1 ${c.tone}`}>{formatINR(c.value || 0)}</div>
+          </div>
+        ))}
+      </div>
+
+      {stats && stats.salesTrend && stats.salesTrend.length > 0 && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-sm text-slate-900 dark:text-white">Sales — last 30 days</h3>
+            <div className="flex gap-3 text-[11px] text-slate-500">
+              {(stats.paymentSummary || []).slice(0, 4).map((p: any) => <span key={p.mode}>{p.mode}: <b className="text-slate-800 dark:text-slate-200">{formatINR(p.amount_paise)}</b></span>)}
+            </div>
+          </div>
+          <div className="flex items-end gap-1 h-28">
+            {(() => {
+              const trend = stats.salesTrend!;
+              const max = Math.max(1, ...trend.map((d: any) => d.salesPaise));
+              return trend.map((d: any) => (
+                <div key={d.date} title={`${d.date}: ${formatINR(d.salesPaise)} (${d.invoices} bills)`}
+                  className="flex-1 rounded-t bg-emerald-500/80 hover:bg-emerald-500 min-h-[2px]" style={{ height: `${Math.max(2, (d.salesPaise / max) * 100)}%` }} />
+              ));
+            })()}
+          </div>
+        </div>
+      )}
 
       {/* Main Grid: Recent Invoices & Top Products */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

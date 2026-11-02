@@ -1,13 +1,15 @@
 import React from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useLanguage } from '../../context/LanguageContext.js';
+import { useLicense } from '../../context/LicenseContext.js';
+import { PAGE_FEATURES } from '../../lib/features.js';
 import { 
   LayoutDashboard, ShoppingCart, FileText, Package, 
   Warehouse, Users, Settings, ShieldCheck, Zap, 
   Truck, Receipt, BarChart3, FileSpreadsheet, UserCheck, 
   UtensilsCrossed, Pill, Barcode, Building2, HardDrive, 
   ShieldAlert, LifeBuoy, RotateCcw, Shirt, Globe, Factory,
-  Award, GraduationCap, Wrench, Layers
+  Award, GraduationCap, Wrench, Layers, Lock, KeyRound
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -18,6 +20,8 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
   const { user } = useAuth();
   const { t } = useLanguage();
+  const { license, hasFeature } = useLicense();
+  const locked = (id: string) => !!PAGE_FEATURES[id] && !hasFeature(PAGE_FEATURES[id]);
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
   const category = user?.businessCategory;
 
@@ -26,7 +30,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
     { id: 'billing', label: t('pos', 'POS Billing'), icon: ShoppingCart },
     { id: 'online-orders', label: t('ecommerce', 'Online Store & Orders'), icon: Globe },
     { id: 'invoices', label: t('invoices', 'Invoices'), icon: FileText },
-    { id: 'products', label: t('inventory', 'Products'), icon: Package },
+    { id: 'products', label: t('products', 'Products'), icon: Package },
     { id: 'inventory', label: t('inventory', 'Inventory'), icon: Warehouse },
   ];
 
@@ -44,7 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
   ];
 
   return (
-    <aside className="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col justify-between select-none shrink-0 overflow-y-auto">
+    <aside className="w-64 h-full min-h-0 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex flex-col justify-between select-none shrink-0 overflow-y-auto">
       <div>
         {/* Brand Header */}
         <div className="h-16 flex items-center px-6 border-b border-slate-200 dark:border-slate-800 gap-3 sticky top-0 bg-white dark:bg-slate-900 z-10">
@@ -83,7 +87,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
                   }`}
                 >
                   <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                  <span>{item.label}</span>
+                  <span className={locked(item.id) ? 'opacity-50' : ''}>{item.label}</span>
+                  {locked(item.id) && <Lock className="w-3 h-3 ml-auto text-slate-400" />}
                   {item.id === 'billing' && (
                     <span className="ml-auto text-[10px] bg-emerald-500/20 text-emerald-200 px-1.5 py-0.5 rounded font-mono">
                       POS
@@ -213,7 +218,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
                   }`}
                 >
                   <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                  <span>{item.label}</span>
+                  <span className={locked(item.id) ? 'opacity-50' : ''}>{item.label}</span>
+                  {locked(item.id) && <Lock className="w-3 h-3 ml-auto text-slate-400" />}
                 </button>
               );
             })}
@@ -233,7 +239,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
               }`}
             >
               <Barcode className="w-4 h-4 text-slate-400" />
-              <span>Barcode Generator</span>
+              <span className={locked('barcodes') ? 'opacity-50' : ''}>Barcode Generator</span>{locked('barcodes') && <Lock className="w-3 h-3 ml-auto text-slate-400" />}
             </button>
             <button
               onClick={() => onNavigate('branches')}
@@ -244,7 +250,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
               }`}
             >
               <Building2 className="w-4 h-4 text-slate-400" />
-              <span>Store Branches</span>
+              <span className={locked('branches') ? 'opacity-50' : ''}>Store Branches</span>{locked('branches') && <Lock className="w-3 h-3 ml-auto text-slate-400" />}
             </button>
             <button
               onClick={() => onNavigate('backup')}
@@ -266,7 +272,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
               }`}
             >
               <ShieldAlert className="w-4 h-4 text-slate-400" />
-              <span>Audit Activity Logs</span>
+              <span className={locked('audit-logs') ? 'opacity-50' : ''}>Audit Activity Logs</span>{locked('audit-logs') && <Lock className="w-3 h-3 ml-auto text-slate-400" />}
             </button>
             <button
               onClick={() => onNavigate('support')}
@@ -293,6 +299,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
             >
               <Settings className="w-4 h-4 text-slate-400" />
               <span>Settings</span>
+            </button>
+            <button
+              onClick={() => onNavigate('license')}
+              className={`w-full flex items-center gap-3 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all ${
+                activePage === 'license'
+                  ? 'bg-emerald-600 text-white shadow-md font-bold'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/80'
+              }`}
+            >
+              <KeyRound className="w-4 h-4 text-slate-400" />
+              <span>License</span>
             </button>
           </div>
 
@@ -321,11 +338,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
       {/* Plan footer card */}
       <div className="p-3 m-3 rounded-xl bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
         <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Apna Billing Core</span>
-          <span className="text-[10px] font-bold bg-emerald-600 text-white px-1.5 py-0.5 rounded">All-in-One</span>
+          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{license?.license?.plan.name || 'Apna Billing Core'}</span>
+          <span className={`text-[10px] font-bold text-white px-1.5 py-0.5 rounded ${license?.canWrite === false ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+            {license?.license?.type || (license?.enforced ? 'UNLICENSED' : 'All-in-One')}
+          </span>
         </div>
         <p className="text-[10px] text-slate-500 dark:text-slate-400">
-          {category ? `${category} Multi-Module Mode` : 'Active'}
+          {license?.license
+            ? license.canWrite
+              ? license.license.daysRemaining !== null ? `${license.license.daysRemaining} day(s) remaining` : 'Lifetime license'
+              : `Read-only · ${license.mode.replace(/_/g, ' ').toLowerCase()}`
+            : category ? `${category} Multi-Module Mode` : 'Active'}
         </p>
       </div>
     </aside>

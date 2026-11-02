@@ -78,9 +78,9 @@ export interface Customer {
   credit_days?: number;
 }
 
-export type PaymentMode = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'CREDIT' | 'SPLIT';
+export type PaymentMode = 'CASH' | 'UPI' | 'CARD' | 'BANK_TRANSFER' | 'CHEQUE' | 'WALLET' | 'CREDIT' | 'SPLIT';
 export type PaymentStatus = 'PAID' | 'PARTIAL' | 'UNPAID';
-export type InvoiceStatus = 'ISSUED' | 'CANCELLED';
+export type InvoiceStatus = 'ISSUED' | 'DRAFT' | 'CANCELLED';
 
 export interface InvoiceItem {
   id?: string;
@@ -152,8 +152,15 @@ export interface DashboardStats {
   month: {
     salesPaise: number;
     invoices: number;
+    purchasesPaise?: number;
+    expensesPaise?: number;
+    grossProfitPaise?: number;
+    netProfitPaise?: number;
   };
   receivablesPaise: number;
+  payablesPaise?: number;
+  salesTrend?: Array<{ date: string; salesPaise: number; invoices: number }>;
+  paymentSummary?: Array<{ mode: string; amount_paise: number; count: number }>;
   lowStockCount: number;
   catalogCount: number;
   recentInvoices: Invoice[];

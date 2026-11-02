@@ -11,6 +11,7 @@ import {
   Download,
   Search
 } from 'lucide-react';
+import { Select } from '../../components/ui/Select.js';
 
 export const BarcodeGeneratorPage: React.FC = () => {
   const { user } = useAuth();
@@ -87,7 +88,7 @@ export const BarcodeGeneratorPage: React.FC = () => {
 
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">Choose Product</label>
-            <select
+            <Select
               value={selectedProductId}
               onChange={(e) => setSelectedProductId(e.target.value)}
               className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
@@ -97,7 +98,7 @@ export const BarcodeGeneratorPage: React.FC = () => {
                   {p.name} ({p.sku || p.barcode || 'No SKU'}) - ₹{(p.sale_price_paise / 100).toFixed(2)}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div>
