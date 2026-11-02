@@ -6,7 +6,7 @@ export function runSeed() {
   console.log('[Seed] Checking database seeding...');
 
   // Check if already seeded
-  const existingPlans = db.prepare('SELECT COUNT(*) as count FROM plans').get() as { count: number };
+  const existingPlans = db.prepare("SELECT COUNT(*) as count FROM businesses WHERE id = 'biz_supermart'").get() as { count: number };
   if (existingPlans && existingPlans.count > 0) {
     console.log('[Seed] Database is already seeded.');
     seedClothingDemo();
@@ -23,7 +23,7 @@ export function runSeed() {
 
   // 1. Insert Plans
   const insertPlan = db.prepare(`
-    INSERT INTO plans (id, name, tier, price_paise, billing_period, max_users, max_branches, max_invoices_per_month, features_json, is_active)
+    INSERT OR IGNORE INTO plans (id, name, tier, price_paise, billing_period, max_users, max_branches, max_invoices_per_month, features_json, is_active)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 

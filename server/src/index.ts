@@ -1,51 +1,45 @@
-import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
+import type { Server } from 'http';
+import { AddressInfo } from 'net';
 import { config } from './config/index.js';
-import routes from './routes.js';
+import { createApp } from './app.js';
 import { runSeed } from './db/seed.js';
+import { startBackgroundJobs, stopBackgroundJobs } from './jobs.js';
 
-const app = express();
+/**
+ * Start the local API server. Used by `npm run dev`/`npm start` and by the Electron main process,
+ * which passes port 0 to get a free port and then loads http://127.0.0.1:<port>.
+ */
+export function startServer(port: number = config.port): Promise<{ server: Server; port: number }> {
+  if (config.demoMode) {
+    runSeed();
+  }
 
-app.use(cors({
-  origin: '*',
-  credentials: true,
-}));
-
-app.use(express.json());
-
-// Request logger for API calls
-app.use((req, res, next) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    if (req.path.startsWith('/api')) {
-      console.log(`[API] ${req.method} ${req.path} -> ${res.statusCode} (${duration}ms)`);
-    }
+  const app = createApp();
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, config.host, () => {
+      const actualPort = (server.address() as AddressInfo).port;
+      console.log(`Apna Billing local server running on http://${config.host}:${actualPort}`);
+      startBackgroundJobs();
+      resolve({ server, port: actualPort });
+    });
+    server.on('error', reject);
   });
-  next();
-});
+}
 
-// Root health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', name: 'Apna Billing API', version: '1.0.0', time: new Date().toISOString() });
-});
+export function stopServer(server: Server): Promise<void> {
+  stopBackgroundJobs();
+  return new Promise((resolve) => server.close(() => resolve()));
+}
 
-// API routes under /api/v1
-app.use('/api/v1', routes);
+// Run directly (not when required by Electron or tests).
+const isDirectRun = (() => {
+  const entry = process.argv[1] || '';
+  return /[\\/]index\.(ts|js)$/.test(entry) && !process.env.APNA_EMBEDDED;
+})();
 
-// Global Error Handler
-app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  console.error('[Error]', err);
-  res.status(err.status || 500).json({
-    code: err.code || 'INTERNAL_ERROR',
-    message: err.message || 'An unexpected error occurred',
-    details: config.isDev ? err.stack : undefined,
+if (isDirectRun) {
+  startServer().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
   });
-});
-
-// Seed DB on start
-runSeed();
-
-app.listen(config.port, () => {
-  console.log(`🚀 Apna Billing backend server running on http://localhost:${config.port}`);
-});
+}

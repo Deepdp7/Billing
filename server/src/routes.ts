@@ -1,5 +1,7 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { authenticate, requireTenant, requireRole } from './middleware/auth.js';
+import { licenseGuard } from './licensing/middleware.js';
+import * as licenseCtrl from './licensing/licenseController.js';
 import * as authCtrl from './modules/auth/authController.js';
 import * as catalogCtrl from './modules/catalog/catalogController.js';
 import * as billingCtrl from './modules/billing/billingController.js';
@@ -35,7 +37,19 @@ const router = Router();
 // ==========================================
 router.post('/auth/login', authCtrl.login);
 router.post('/auth/register', authCtrl.registerBusiness);
+router.post('/auth/erase-shop', authenticate, authCtrl.eraseShop);
 router.get('/auth/me', authenticate, authCtrl.getCurrentUser);
+
+// Local license management (talks to the central license server)
+router.get('/license/status', licenseCtrl.getStatus);
+router.post('/license/connectivity', licenseCtrl.checkConnectivity);
+router.get('/license/events', licenseCtrl.streamEvents);
+router.post('/license/trial', ...licenseCtrl.startTrial);
+router.post('/license/activate', ...licenseCtrl.activate);
+router.post('/license/deactivate', ...licenseCtrl.deactivate);
+router.post('/license/sync', authenticate, licenseCtrl.sync);
+router.post('/license/usage', authenticate, licenseCtrl.trackUsage);
+router.get('/license/usage', authenticate, licenseCtrl.getUsage);
 
 // Public Storefront & Customer Order Intake (PRD §4.20)
 router.get('/public/store/:slug', storefrontCtrl.getPublicStore);
@@ -55,51 +69,90 @@ router.get('/registry/modules', (req, res) => {
 // 2. TENANT APP ROUTES (/api/v1/app/*)
 // ==========================================
 const appRouter = Router();
-appRouter.use(authenticate, requireTenant);
+appRouter.use(authenticate, requireTenant, licenseGuard);
+const ownerOnly = requireRole('BUSINESS_OWNER', 'SUPER_ADMIN');
 
 // Business Profile & Dashboard
 appRouter.get('/business/profile', bizCtrl.getBusinessProfile);
 appRouter.put('/business/profile', bizCtrl.updateBusinessProfile);
 appRouter.get('/business/stats', bizCtrl.getDashboardStats);
+appRouter.get('/business/settings', bizCtrl.getSettings);
+appRouter.put('/business/settings', ownerOnly, bizCtrl.updateSettings);
 
 // Catalog (Products & Categories)
 appRouter.get('/products', catalogCtrl.getProducts);
+appRouter.get('/products/export', catalogCtrl.exportProducts);
 appRouter.post('/products', catalogCtrl.createProduct);
 appRouter.put('/products/:id', catalogCtrl.updateProduct);
 appRouter.delete('/products/:id', catalogCtrl.deleteProduct);
 
 appRouter.get('/categories', catalogCtrl.getCategories);
 appRouter.post('/categories', catalogCtrl.createCategory);
+appRouter.put('/categories/:id', catalogCtrl.updateCategory);
+appRouter.delete('/categories/:id', catalogCtrl.deleteCategory);
 
 // Billing & Invoicing (POS)
 appRouter.post('/billing/checkout', billingCtrl.createInvoice);
 appRouter.get('/billing/invoices', billingCtrl.getInvoices);
 appRouter.get('/billing/invoices/:id', billingCtrl.getInvoiceById);
 appRouter.post('/billing/invoices/:id/cancel', billingCtrl.cancelInvoice);
+appRouter.post('/billing/invoices/:id/payments', billingCtrl.recordPayment);
+appRouter.post('/billing/invoices/:id/duplicate', billingCtrl.duplicateInvoice);
+appRouter.put('/billing/invoices/:id/draft', billingCtrl.updateDraft);
+appRouter.post('/billing/invoices/:id/issue', billingCtrl.issueDraft);
+appRouter.delete('/billing/invoices/:id/draft', billingCtrl.deleteDraft);
+appRouter.get('/billing/payments', billingCtrl.getPayments);
+appRouter.get('/billing/held', billingCtrl.getHeldBills);
+appRouter.post('/billing/held', billingCtrl.holdBill);
+appRouter.delete('/billing/held/:id', billingCtrl.deleteHeldBill);
 
 // Customers
 appRouter.get('/customers', customerCtrl.getCustomers);
+appRouter.get('/customers/export', customerCtrl.exportCustomers);
 appRouter.post('/customers', customerCtrl.createCustomer);
 appRouter.get('/customers/:id', customerCtrl.getCustomerById);
+appRouter.put('/customers/:id', customerCtrl.updateCustomer);
+appRouter.delete('/customers/:id', customerCtrl.deleteCustomer);
+appRouter.get('/customers/:id/ledger', customerCtrl.getCustomerLedger);
+appRouter.post('/customers/:id/payments', customerCtrl.receiveCustomerPayment);
 
 // Inventory
 appRouter.get('/inventory/alerts', inventoryCtrl.getLowStockAlerts);
 appRouter.post('/inventory/adjust', inventoryCtrl.adjustStock);
 appRouter.get('/inventory/movements', inventoryCtrl.getStockMovements);
+appRouter.get('/inventory/valuation', catalogCtrl.getInventoryValuation);
 
 // Operations: Purchases & Suppliers
 appRouter.get('/suppliers', purchaseCtrl.getSuppliers);
 appRouter.post('/suppliers', purchaseCtrl.createSupplier);
+appRouter.put('/suppliers/:id', purchaseCtrl.updateSupplier);
+appRouter.delete('/suppliers/:id', purchaseCtrl.deleteSupplier);
+appRouter.post('/suppliers/:id/payments', purchaseCtrl.paySupplier);
+appRouter.get('/suppliers/:id/ledger', purchaseCtrl.getSupplierLedger);
 appRouter.get('/purchases', purchaseCtrl.getPurchases);
 appRouter.post('/purchases', purchaseCtrl.createPurchase);
+appRouter.get('/purchases/:id', purchaseCtrl.getPurchaseById);
+appRouter.get('/purchase-orders', purchaseCtrl.getPurchaseOrders);
+appRouter.post('/purchase-orders', purchaseCtrl.createPurchaseOrder);
+appRouter.get('/purchase-orders/:id', purchaseCtrl.getPurchaseOrderById);
+appRouter.post('/purchase-orders/:id/receive', purchaseCtrl.receivePurchaseOrder);
+appRouter.post('/purchase-orders/:id/cancel', purchaseCtrl.cancelPurchaseOrder);
 
 // Operations: Expenses
 appRouter.get('/expenses', expenseCtrl.getExpenses);
+appRouter.get('/expenses/categories', expenseCtrl.getExpenseCategories);
+appRouter.get('/expenses/analytics', expenseCtrl.getExpenseAnalytics);
+appRouter.get('/expenses/export', expenseCtrl.exportExpenses);
 appRouter.post('/expenses', expenseCtrl.createExpense);
+appRouter.put('/expenses/:id', expenseCtrl.updateExpense);
+appRouter.delete('/expenses/:id', expenseCtrl.deleteExpense);
 
 // Operations: Accounting & Reports
 appRouter.get('/accounting/profit-loss', acctCtrl.getProfitAndLoss);
 appRouter.get('/accounting/gst-summary', acctCtrl.getGstSummary);
+appRouter.get('/reports', acctCtrl.listReports);
+appRouter.get('/reports/:type', acctCtrl.getReport);
+appRouter.get('/reports/:type/export', acctCtrl.exportReport);
 
 // Operations: Staff Management
 appRouter.get('/staff', staffCtrl.getStaff);
@@ -136,7 +189,12 @@ appRouter.put('/notifications/:id/read', vertCtrl.markNotificationRead);
 appRouter.get('/backups/export', backupCtrl.exportBackup);
 appRouter.post('/backups/snapshot', backupCtrl.createBackupSnapshot);
 appRouter.get('/backups', backupCtrl.getBackups);
-appRouter.post('/backups/restore', backupCtrl.restoreBackup);
+appRouter.get('/backups/settings', backupCtrl.getBackupSettings);
+appRouter.put('/backups/settings', ownerOnly, backupCtrl.updateBackupSettings);
+appRouter.post('/backups/restore', ownerOnly, backupCtrl.restoreBackup);
+appRouter.post('/backups/restore-upload', ownerOnly, express.raw({ type: 'application/octet-stream', limit: '1gb' }), backupCtrl.uploadAndRestore);
+appRouter.post('/backups/:id/verify', backupCtrl.verifyBackup);
+appRouter.delete('/backups/:id', ownerOnly, backupCtrl.deleteBackup);
 
 // Phase 5: Multi-Store & Branches
 appRouter.get('/branches', branchCtrl.getBranches);

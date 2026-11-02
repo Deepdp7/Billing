@@ -7,19 +7,24 @@ exports.db = void 0;
 const better_sqlite3_1 = __importDefault(require("better-sqlite3"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const crypto_1 = __importDefault(require("crypto"));
 const index_js_1 = require("../config/index.js");
-const schema_js_1 = require("./schema.js");
-const dbDir = path_1.default.dirname(index_js_1.config.dbPath);
-if (!fs_1.default.existsSync(dbDir)) {
-    fs_1.default.mkdirSync(dbDir, { recursive: true });
-}
-exports.db = new better_sqlite3_1.default(index_js_1.config.dbPath, {
-// verbose: config.isDev ? console.log : undefined,
-});
-// Configure SQLite for high performance and integrity
-exports.db.pragma('foreign_keys = ON');
+const migrations_js_1 = require("./migrations.js");
+fs_1.default.mkdirSync(path_1.default.dirname(index_js_1.config.dbPath), { recursive: true });
+exports.db = new better_sqlite3_1.default(index_js_1.config.dbPath);
 exports.db.pragma('journal_mode = WAL');
 exports.db.pragma('synchronous = NORMAL');
-// Run schema initialization
-exports.db.exec(schema_js_1.SCHEMA_SQL);
-console.log(`[Database] SQLite connected & initialized at: ${index_js_1.config.dbPath}`);
+exports.db.pragma('foreign_keys = ON');
+exports.db.pragma('busy_timeout = 5000');
+const result = (0, migrations_js_1.runMigrations)(exports.db, {
+    backupDir: index_js_1.config.backupDir,
+    onBackup: (filePath, fromVersion) => {
+        const stat = fs_1.default.statSync(filePath);
+        const sha256 = crypto_1.default.createHash('sha256').update(fs_1.default.readFileSync(filePath)).digest('hex');
+        exports.db.prepare(`
+      INSERT INTO backup_history (id, file_name, file_path, size_bytes, sha256, kind, status, schema_version, notes)
+      VALUES (?, ?, ?, ?, ?, 'PRE_MIGRATION', 'OK', ?, ?)
+    `).run(crypto_1.default.randomUUID(), path_1.default.basename(filePath), filePath, stat.size, sha256, fromVersion, `Automatic backup before upgrading schema from v${fromVersion}`);
+    },
+});
+console.log(`[Database] SQLite ready at ${index_js_1.config.dbPath} (schema v${result.to})`);

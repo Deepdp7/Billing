@@ -1,0 +1,25 @@
+{
+  "identifier": "default",
+  "description": "Window controls for the custom title bar",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:3100",
+      "http://127.0.0.1:3100/*",
+      "http://localhost:3100",
+      "http://localhost:3100/*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-unminimize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-is-maximized",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-focus"
+  ]
+}

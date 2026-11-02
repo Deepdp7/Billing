@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html.tauri-shell,
+html.tauri-shell body,
+html.tauri-shell #root {
+  height: 100%;
+  overflow: hidden;
+}
+html.tauri-shell .h-screen,
+html.tauri-shell .min-h-screen,
+html.tauri-shell .h-dvh {
+  height: 100% !important;
+  min-height: 0 !important;
+}
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: rgb(203 213 225); border-radius: 9999px; }
+.dark ::-webkit-scrollbar-thumb { background: rgb(51 65 85); }
+
+/* Popover list used by the custom Select */
+@keyframes apna-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+.apna-pop { animation: apna-pop 120ms ease-out; }

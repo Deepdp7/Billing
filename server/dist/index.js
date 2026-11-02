@@ -1,47 +1,42 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = __importDefault(require("express"));
-const cors_1 = __importDefault(require("cors"));
+exports.startServer = startServer;
+exports.stopServer = stopServer;
 const index_js_1 = require("./config/index.js");
-const routes_js_1 = __importDefault(require("./routes.js"));
+const app_js_1 = require("./app.js");
 const seed_js_1 = require("./db/seed.js");
-const app = (0, express_1.default)();
-app.use((0, cors_1.default)({
-    origin: '*',
-    credentials: true,
-}));
-app.use(express_1.default.json());
-// Request logger for API calls
-app.use((req, res, next) => {
-    const start = Date.now();
-    res.on('finish', () => {
-        const duration = Date.now() - start;
-        if (req.path.startsWith('/api')) {
-            console.log(`[API] ${req.method} ${req.path} -> ${res.statusCode} (${duration}ms)`);
-        }
+const jobs_js_1 = require("./jobs.js");
+/**
+ * Start the local API server. Used by `npm run dev`/`npm start` and by the Electron main process,
+ * which passes port 0 to get a free port and then loads http://127.0.0.1:<port>.
+ */
+function startServer(port = index_js_1.config.port) {
+    if (index_js_1.config.demoMode) {
+        (0, seed_js_1.runSeed)();
+    }
+    const app = (0, app_js_1.createApp)();
+    return new Promise((resolve, reject) => {
+        const server = app.listen(port, index_js_1.config.host, () => {
+            const actualPort = server.address().port;
+            console.log(`Apna Billing local server running on http://${index_js_1.config.host}:${actualPort}`);
+            (0, jobs_js_1.startBackgroundJobs)();
+            resolve({ server, port: actualPort });
+        });
+        server.on('error', reject);
     });
-    next();
-});
-// Root health check
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', name: 'Apna Billing API', version: '1.0.0', time: new Date().toISOString() });
-});
-// API routes under /api/v1
-app.use('/api/v1', routes_js_1.default);
-// Global Error Handler
-app.use((err, req, res, next) => {
-    console.error('[Error]', err);
-    res.status(err.status || 500).json({
-        code: err.code || 'INTERNAL_ERROR',
-        message: err.message || 'An unexpected error occurred',
-        details: index_js_1.config.isDev ? err.stack : undefined,
+}
+function stopServer(server) {
+    (0, jobs_js_1.stopBackgroundJobs)();
+    return new Promise((resolve) => server.close(() => resolve()));
+}
+// Run directly (not when required by Electron or tests).
+const isDirectRun = (() => {
+    const entry = process.argv[1] || '';
+    return /[\\/]index\.(ts|js)$/.test(entry) && !process.env.APNA_EMBEDDED;
+})();
+if (isDirectRun) {
+    startServer().catch((err) => {
+        console.error('Failed to start server:', err);
+        process.exit(1);
     });
-});
-// Seed DB on start
-(0, seed_js_1.runSeed)();
-app.listen(index_js_1.config.port, () => {
-    console.log(`🚀 Apna Billing backend server running on http://localhost:${index_js_1.config.port}`);
-});
+}

@@ -1,0 +1,32 @@
+node_modules/
+*.log
+
+# Local databases and per-install secrets (never commit customer or demo data)
+server/data/
+license-server/data/
+*.db
+*.db-shm
+*.db-wal
+.jwt-secret
+.env
+
+# License signing keys — the private key must never be committed or shipped
+license-server/keys/
+
+# Build output
+client/dist/
+admin-panel/dist/
+server/dist/
+license-server/dist/
+desktop/app/
+desktop/release/
+
+# Tauri shell
+tauri/app/
+tauri/src-tauri/target/
+tauri/src-tauri/gen/
+admin-tauri/src-tauri/target/
+admin-tauri/src-tauri/gen/
+
+# Built client installers (python deploy/apna_vps.py build / release)
+releases/

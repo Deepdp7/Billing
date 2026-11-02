@@ -191,7 +191,7 @@ export function createSalesReturn(req: AuthenticatedRequest, res: Response): voi
     if (customerId && (refundMode === 'STORE_CREDIT' || refundMode === 'ADJUST_BALANCE')) {
       db.prepare(`
         UPDATE customers 
-        SET outstanding_balance_paise = MAX(0, outstanding_balance_paise - ?), updated_at = datetime('now')
+        SET outstanding_balance_paise = outstanding_balance_paise - ?, updated_at = datetime('now')
         WHERE id = ? AND business_id = ?
       `).run(totalRefundPaise, customerId, businessId);
     }
@@ -434,7 +434,7 @@ export function createPurchaseReturn(req: AuthenticatedRequest, res: Response): 
     if (supplierId && refundMode === 'ADJUST_PAYABLE') {
       db.prepare(`
         UPDATE suppliers 
-        SET outstanding_balance_paise = MAX(0, outstanding_balance_paise - ?), updated_at = datetime('now')
+        SET outstanding_balance_paise = outstanding_balance_paise - ?, updated_at = datetime('now')
         WHERE id = ? AND business_id = ?
       `).run(totalPaise, supplierId, businessId);
     }

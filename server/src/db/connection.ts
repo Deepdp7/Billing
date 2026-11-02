@@ -1,42 +1,30 @@
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { config } from '../config/index.js';
-import { SCHEMA_SQL } from './schema.js';
+import { runMigrations } from './migrations.js';
 
-const dbDir = path.dirname(config.dbPath);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
 
-export const db: Database.Database = new Database(config.dbPath, {
-  // verbose: config.isDev ? console.log : undefined,
-});
+export const db: Database.Database = new Database(config.dbPath);
 
-// Configure SQLite for high performance and integrity
-db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
+db.pragma('foreign_keys = ON');
+db.pragma('busy_timeout = 5000');
 
-// Run schema initialization
-db.exec(SCHEMA_SQL);
+const result = runMigrations(db, {
+  backupDir: config.backupDir,
+  onBackup: (filePath, fromVersion) => {
+    const stat = fs.statSync(filePath);
+    const sha256 = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+    db.prepare(`
+      INSERT INTO backup_history (id, file_name, file_path, size_bytes, sha256, kind, status, schema_version, notes)
+      VALUES (?, ?, ?, ?, ?, 'PRE_MIGRATION', 'OK', ?, ?)
+    `).run(crypto.randomUUID(), path.basename(filePath), filePath, stat.size, sha256, fromVersion,
+      `Automatic backup before upgrading schema from v${fromVersion}`);
+  },
+});
 
-// Safe column migrations
-try {
-  db.exec("ALTER TABLE customers ADD COLUMN loyalty_points INTEGER DEFAULT 0;");
-} catch {}
-try {
-  db.exec("ALTER TABLE invoices ADD COLUMN loyalty_points_redeemed INTEGER DEFAULT 0;");
-} catch {}
-try {
-  db.exec("ALTER TABLE invoices ADD COLUMN loyalty_points_earned INTEGER DEFAULT 0;");
-} catch {}
-try {
-  db.exec("ALTER TABLE customers ADD COLUMN customer_type TEXT DEFAULT 'RETAIL';");
-} catch {}
-try {
-  db.exec("ALTER TABLE customers ADD COLUMN credit_days INTEGER DEFAULT 30;");
-} catch {}
-
-console.log(`[Database] SQLite connected & initialized at: ${config.dbPath}`);
-
+console.log(`[Database] SQLite ready at ${config.dbPath} (schema v${result.to})`);

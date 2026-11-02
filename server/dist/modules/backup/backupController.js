@@ -1,151 +1,131 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.uploadAndRestore = exports.restoreBackup = exports.createBackupSnapshot = void 0;
 exports.exportBackup = exportBackup;
-exports.createBackupSnapshot = createBackupSnapshot;
 exports.getBackups = getBackups;
-exports.restoreBackup = restoreBackup;
-const uuid_1 = require("uuid");
+exports.verifyBackup = verifyBackup;
+exports.deleteBackup = deleteBackup;
+exports.getBackupSettings = getBackupSettings;
+exports.updateBackupSettings = updateBackupSettings;
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
+const crypto_1 = __importDefault(require("crypto"));
+const zod_1 = require("zod");
 const connection_js_1 = require("../../db/connection.js");
+const http_js_1 = require("../../lib/http.js");
+const index_js_1 = require("../../config/index.js");
+const migrations_js_1 = require("../../db/migrations.js");
+const backupService = __importStar(require("../../services/backupService.js"));
+const auditService_js_1 = require("../../services/auditService.js");
+/** Full JSON export of every table that belongs to this business (data portability). */
 function exportBackup(req, res) {
     const businessId = req.businessId;
-    const business = connection_js_1.db.prepare('SELECT * FROM businesses WHERE id = ?').get(businessId);
-    const products = connection_js_1.db.prepare('SELECT * FROM products WHERE business_id = ?').all(businessId);
-    const categories = connection_js_1.db.prepare('SELECT * FROM categories WHERE business_id = ?').all(businessId);
-    const customers = connection_js_1.db.prepare('SELECT * FROM customers WHERE business_id = ?').all(businessId);
-    const invoices = connection_js_1.db.prepare('SELECT * FROM invoices WHERE business_id = ?').all(businessId);
-    const invoiceItems = connection_js_1.db.prepare('SELECT * FROM invoice_items WHERE business_id = ?').all(businessId);
-    const suppliers = connection_js_1.db.prepare('SELECT * FROM suppliers WHERE business_id = ?').all(businessId);
-    const purchaseInvoices = connection_js_1.db.prepare('SELECT * FROM purchase_invoices WHERE business_id = ?').all(businessId);
-    const purchaseItems = connection_js_1.db.prepare('SELECT * FROM purchase_items WHERE business_id = ?').all(businessId);
-    const expenses = connection_js_1.db.prepare('SELECT * FROM expenses WHERE business_id = ?').all(businessId);
-    const staff = connection_js_1.db.prepare('SELECT * FROM staff WHERE business_id = ?').all(businessId);
-    const quotations = connection_js_1.db.prepare('SELECT * FROM quotations WHERE business_id = ?').all(businessId);
-    const quotationItems = connection_js_1.db.prepare('SELECT * FROM quotation_items WHERE business_id = ?').all(businessId);
-    const tables = connection_js_1.db.prepare('SELECT * FROM restaurant_tables WHERE business_id = ?').all(businessId);
-    const kots = connection_js_1.db.prepare('SELECT * FROM kots WHERE business_id = ?').all(businessId);
-    const branches = connection_js_1.db.prepare('SELECT * FROM branches WHERE business_id = ?').all(businessId);
-    const backupData = {
-        metadata: {
-            platform: 'Apna Billing',
-            version: '1.0.0',
-            exported_at: new Date().toISOString(),
-            business_id: businessId,
-        },
-        business,
-        products,
-        categories,
-        customers,
-        invoices,
-        invoiceItems,
-        suppliers,
-        purchaseInvoices,
-        purchaseItems,
-        expenses,
-        staff,
-        quotations,
-        quotationItems,
-        tables,
-        kots,
-        branches,
-    };
+    const tables = connection_js_1.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map((t) => t.name);
+    const data = {};
+    for (const t of tables) {
+        const cols = connection_js_1.db.prepare(`PRAGMA table_info("${t}")`).all().map((c) => c.name);
+        if (!cols.includes('business_id'))
+            continue;
+        data[t] = connection_js_1.db.prepare(`SELECT * FROM "${t}" WHERE business_id = ?`).all(businessId);
+    }
+    data.businesses = [connection_js_1.db.prepare('SELECT * FROM businesses WHERE id = ?').get(businessId)];
+    (0, auditService_js_1.logAudit)({ businessId, userId: req.user?.userId, action: 'DATA_EXPORTED', entityType: 'BACKUP' });
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename="backup_${businessId}_${Date.now()}.json"`);
-    res.json(backupData);
+    res.setHeader('Content-Disposition', `attachment; filename="apna-billing-export-${Date.now()}.json"`);
+    res.send(JSON.stringify({
+        metadata: { platform: 'Apna Billing', appVersion: index_js_1.APP_VERSION, schemaVersion: (0, migrations_js_1.getSchemaVersion)(connection_js_1.db), exported_at: new Date().toISOString(), business_id: businessId },
+        data,
+    }));
 }
-function createBackupSnapshot(req, res) {
-    const businessId = req.businessId;
-    const { name } = req.body;
-    const productsCount = connection_js_1.db.prepare('SELECT COUNT(*) as count FROM products WHERE business_id = ?').get(businessId).count;
-    const invoicesCount = connection_js_1.db.prepare('SELECT COUNT(*) as count FROM invoices WHERE business_id = ?').get(businessId).count;
-    const customersCount = connection_js_1.db.prepare('SELECT COUNT(*) as count FROM customers WHERE business_id = ?').get(businessId).count;
-    const totalRecords = productsCount + invoicesCount + customersCount;
-    // Generate payload
-    const business = connection_js_1.db.prepare('SELECT * FROM businesses WHERE id = ?').get(businessId);
-    const products = connection_js_1.db.prepare('SELECT * FROM products WHERE business_id = ?').all(businessId);
-    const invoices = connection_js_1.db.prepare('SELECT * FROM invoices WHERE business_id = ?').all(businessId);
-    const customers = connection_js_1.db.prepare('SELECT * FROM customers WHERE business_id = ?').all(businessId);
-    const snapshotJson = JSON.stringify({
-        metadata: { exported_at: new Date().toISOString() },
-        business,
-        products,
-        invoices,
-        customers,
-    });
-    const sizeKb = Math.round((Buffer.byteLength(snapshotJson, 'utf8') / 1024) * 100) / 100;
-    const backupId = (0, uuid_1.v4)();
-    const backupName = name || `Automatic Snapshot - ${new Date().toLocaleDateString('en-IN')}`;
-    connection_js_1.db.prepare(`
-    INSERT INTO backups (id, business_id, backup_name, record_count, file_size_kb, data_json)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(backupId, businessId, backupName, totalRecords, sizeKb, snapshotJson);
-    // Log audit
-    connection_js_1.db.prepare(`
-    INSERT INTO audit_logs (id, user_id, business_id, action, entity_type, entity_id, details_json)
-    VALUES (?, ?, ?, 'BACKUP_CREATED', 'BACKUP', ?, ?)
-  `).run((0, uuid_1.v4)(), req.user?.userId || null, businessId, backupId, JSON.stringify({ name: backupName, sizeKb }));
-    res.status(201).json({
-        message: 'Backup snapshot created successfully',
-        backup: {
-            id: backupId,
-            backup_name: backupName,
-            record_count: totalRecords,
-            file_size_kb: sizeKb,
-            created_at: new Date().toISOString(),
-        },
-    });
-}
+exports.createBackupSnapshot = (0, http_js_1.asyncHandler)(async (req, res) => {
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 120) : '';
+    const backup = await backupService.createBackup({ kind: 'MANUAL', userId: req.user?.userId, notes: name || 'Manual backup' });
+    (0, auditService_js_1.logAudit)({ businessId: req.businessId, userId: req.user?.userId, action: 'BACKUP_CREATED', entityType: 'BACKUP', entityId: backup.id,
+        details: { file: backup.file_name, sizeBytes: backup.size_bytes } });
+    res.status(201).json({ message: 'Backup created and verified', backup });
+});
 function getBackups(req, res) {
-    const businessId = req.businessId;
-    const backups = connection_js_1.db.prepare(`
-    SELECT id, business_id, backup_name, record_count, file_size_kb, created_at
-    FROM backups
-    WHERE business_id = ?
-    ORDER BY created_at DESC
-  `).all(businessId);
-    res.json({ backups });
+    res.json({ backups: backupService.listBackups(), settings: backupService.getBackupSettings() });
 }
-function restoreBackup(req, res) {
-    const businessId = req.businessId;
-    const { backupId, rawJson } = req.body;
-    let backupData = null;
-    if (backupId) {
-        const row = connection_js_1.db.prepare('SELECT data_json FROM backups WHERE id = ? AND business_id = ?').get(backupId, businessId);
-        if (!row) {
-            res.status(404).json({ error: 'Backup not found' });
-            return;
-        }
-        backupData = JSON.parse(row.data_json);
-    }
-    else if (rawJson) {
-        backupData = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson;
-    }
-    else {
-        res.status(400).json({ error: 'Please provide either backupId or rawJson' });
-        return;
-    }
-    // Restore within transaction
-    const transaction = connection_js_1.db.transaction(() => {
-        // If customers are provided, upsert them
-        if (backupData.customers && Array.isArray(backupData.customers)) {
-            const upsertCustomer = connection_js_1.db.prepare(`
-        INSERT OR REPLACE INTO customers (id, business_id, name, phone, email, gstin, address, credit_limit_paise, outstanding_balance_paise)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-            for (const c of backupData.customers) {
-                upsertCustomer.run(c.id || (0, uuid_1.v4)(), businessId, c.name, c.phone || null, c.email || null, c.gstin || null, c.address || null, c.credit_limit_paise || 0, c.outstanding_balance_paise || 0);
-            }
-        }
-        // Log audit
-        connection_js_1.db.prepare(`
-      INSERT INTO audit_logs (id, user_id, business_id, action, entity_type, details_json)
-      VALUES (?, ?, ?, 'BACKUP_RESTORED', 'BACKUP', ?)
-    `).run((0, uuid_1.v4)(), req.user?.userId || null, businessId, JSON.stringify({ restoredRecords: backupData.products?.length || 0 }));
-    });
-    transaction();
-    res.json({
-        message: 'Backup restored and verified successfully',
-        details: {
-            timestamp: new Date().toISOString(),
-        },
-    });
+function verifyBackup(req, res) {
+    res.json({ backup: backupService.verifyBackup(req.params.id) });
+}
+function deleteBackup(req, res) {
+    backupService.deleteBackup(req.params.id);
+    (0, auditService_js_1.logAudit)({ businessId: req.businessId, userId: req.user?.userId, action: 'BACKUP_DELETED', entityType: 'BACKUP', entityId: req.params.id });
+    res.json({ message: 'Backup deleted' });
+}
+const restoreSchema = zod_1.z.object({
+    backupId: zod_1.z.string().max(64).optional(),
+    filePath: zod_1.z.string().max(1024).optional(),
+}).refine((v) => v.backupId || v.filePath, 'Provide backupId or filePath');
+exports.restoreBackup = (0, http_js_1.asyncHandler)(async (req, res) => {
+    const input = (0, http_js_1.parse)(restoreSchema, req.body);
+    const result = input.backupId
+        ? await backupService.restoreBackupById(input.backupId, req.user?.userId)
+        : await backupService.restoreFromFile(input.filePath, req.user?.userId);
+    res.json({ message: 'Backup restored successfully. A safety backup of the previous data was created first.', details: result });
+});
+/** Restore from a .db file uploaded as the raw request body (application/octet-stream). */
+exports.uploadAndRestore = (0, http_js_1.asyncHandler)(async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length < 100)
+        throw new http_js_1.HttpError(400, 'NO_FILE', 'Upload a backup .db file');
+    if (req.body.subarray(0, 15).toString('utf8') !== 'SQLite format 3')
+        throw new http_js_1.HttpError(400, 'INVALID_BACKUP_FILE', 'File is not a SQLite database');
+    const { backupDir } = backupService.getBackupSettings();
+    fs_1.default.mkdirSync(backupDir, { recursive: true });
+    const dest = path_1.default.join(backupDir, `uploaded-${Date.now()}-${crypto_1.default.randomBytes(3).toString('hex')}.db`);
+    fs_1.default.writeFileSync(dest, req.body);
+    const result = await backupService.restoreFromFile(dest, req.user?.userId);
+    res.json({ message: 'Backup restored successfully. A safety backup of the previous data was created first.', details: result });
+});
+function getBackupSettings(req, res) {
+    res.json({ settings: backupService.getBackupSettings() });
+}
+function updateBackupSettings(req, res) {
+    const input = (0, http_js_1.parse)(zod_1.z.object({
+        backupDir: zod_1.z.string().trim().min(1).max(1024).optional(),
+        autoBackupEnabled: zod_1.z.boolean().optional(),
+        autoBackupIntervalHours: zod_1.z.coerce.number().min(1).max(168).optional(),
+        keepAutoBackups: zod_1.z.coerce.number().int().min(1).max(365).optional(),
+    }), req.body);
+    const settings = backupService.updateBackupSettings(input);
+    (0, auditService_js_1.logAudit)({ businessId: req.businessId, userId: req.user?.userId, action: 'BACKUP_SETTINGS_UPDATED', entityType: 'BACKUP', details: input });
+    res.json({ message: 'Backup settings saved', settings });
 }
