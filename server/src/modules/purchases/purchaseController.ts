@@ -247,6 +247,41 @@ export function createPurchase(req: AuthenticatedRequest, res: Response): void {
   res.status(201).json({ message: 'Purchase recorded and stock updated successfully', purchaseId: result.id });
 }
 
+/** Delete a purchase bill: reverse stock, undo supplier dues, remove payment rows. */
+export function deletePurchase(req: AuthenticatedRequest, res: Response): void {
+  const businessId = req.businessId!;
+  const purchase = db.prepare('SELECT * FROM purchase_invoices WHERE id = ? AND business_id = ?').get(req.params.id, businessId) as any;
+  if (!purchase) throw new HttpError(404, 'NOT_FOUND', 'Purchase not found');
+  const returns = db.prepare('SELECT COUNT(*) AS c FROM debit_notes WHERE purchase_id = ? AND business_id = ?').get(purchase.id, businessId) as any;
+  if (returns.c > 0) throw new HttpError(409, 'HAS_RETURNS', 'This purchase has returns recorded. Remove those first.');
+
+  db.transaction(() => {
+    const items = db.prepare('SELECT * FROM purchase_items WHERE purchase_id = ? AND business_id = ?').all(purchase.id, businessId) as any[];
+    for (const it of items) {
+      if (!it.product_id) continue;
+      db.prepare("UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = datetime('now') WHERE id = ?")
+        .run(it.quantity, it.product_id);
+      db.prepare(`INSERT INTO stock_movements (id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes)
+                  VALUES (?, ?, ?, ?, (SELECT stock_quantity FROM products WHERE id = ?), 'PURCHASE_DELETE', ?, ?)`)
+        .run(crypto.randomUUID(), businessId, it.product_id, -it.quantity, it.product_id, purchase.id,
+          `Deleted purchase ${purchase.purchase_number}`);
+    }
+    if (purchase.supplier_id) {
+      const unpaid = purchase.total_paise - purchase.amount_paid_paise;
+      if (unpaid > 0) {
+        db.prepare("UPDATE suppliers SET outstanding_balance_paise = outstanding_balance_paise - ?, updated_at = datetime('now') WHERE id = ?")
+          .run(unpaid, purchase.supplier_id);
+      }
+    }
+    db.prepare("DELETE FROM payments WHERE purchase_id = ? AND business_id = ?").run(purchase.id, businessId);
+    db.prepare('DELETE FROM purchase_invoices WHERE id = ? AND business_id = ?').run(purchase.id, businessId);
+  })();
+
+  logAudit({ businessId, userId: req.user?.userId, action: 'PURCHASE_DELETED', entityType: 'PURCHASE', entityId: purchase.id,
+    details: { number: purchase.purchase_number, supplier: purchase.supplier_name, totalPaise: purchase.total_paise } });
+  res.json({ message: `Purchase ${purchase.purchase_number} deleted`, id: purchase.id });
+}
+
 // ---------------- Purchase orders ----------------
 
 const poSchema = z.object({

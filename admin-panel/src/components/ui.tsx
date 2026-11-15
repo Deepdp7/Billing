@@ -104,6 +104,14 @@ export function Stat({ label, value, hint, tone = 'slate', onClick }: { label: s
 
 const chip = (light: string, dark: string) => `${light} ${dark}`;
 const BADGE: Record<string, string> = {
+  PUBLISHED: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  UPLOADED: 'bg-sky-50 text-sky-700 border-sky-200',
+  SUPERSEDED: 'bg-slate-100 text-slate-500 border-slate-200',
+  PAUSED: 'bg-amber-50 text-amber-700 border-amber-200',
+  REQUIRED: 'bg-rose-50 text-rose-700 border-rose-200',
+  OPTIONAL: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  UP_TO_DATE: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  UPDATE_PENDING: 'bg-amber-50 text-amber-700 border-amber-200',
   ACTIVE: chip('bg-emerald-50 text-emerald-700 border-emerald-200', 'dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/30'),
   PAID: chip('bg-indigo-50 text-indigo-700 border-indigo-200', 'dark:bg-indigo-500/15 dark:text-indigo-300 dark:border-indigo-500/30'),
   TRIAL: chip('bg-sky-50 text-sky-700 border-sky-200', 'dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30'),

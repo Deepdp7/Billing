@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Copy, Plus } from 'lucide-react';
-import { get, post, put, qs } from '../api';
+import { ArrowLeft, Copy, Plus, Trash2 } from 'lucide-react';
+import { del, get, post, put, qs } from '../api';
 import { useApp } from '../App';
 import { Alert, Badge, Button, Card, Field, Input, Modal, PageHeader, Select, Table, Textarea, daysLeft, fmtAgo, fmtDate, fmtINR, useAction, useAsync } from '../components/ui';
 import { FeatureMatrix } from '../components/FeatureMatrix';
@@ -11,6 +11,17 @@ export const licenseStatusCell = (r: any) => {
   const d = daysLeft(r.expires_at);
   return <span className="inline-flex items-center gap-1"><Badge value={s} />{s === 'ACTIVE' && d !== null && d <= 7 && <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">{d}d left</span>}</span>;
 };
+
+/** Revoked / expired / unused (no live devices) can be removed from history. */
+export function canDeleteLicense(l: any) {
+  const s = l.effective_status || l.status;
+  if (s === 'REVOKED' || s === 'EXPIRED') return true;
+  const devices = Number(l.device_count ?? l.live_devices ?? 0);
+  if (Array.isArray(l.installations)) {
+    return !l.installations.some((i: any) => i.status === 'ACTIVE');
+  }
+  return devices === 0;
+}
 
 export function CreateLicenseModal({ customerId, onClose, onCreated }: { customerId?: string; onClose: () => void; onCreated: (l: any) => void }) {
   const plans = useAsync(() => get('/plans'), []);
@@ -70,7 +81,26 @@ export function LicensesPage({ preset }: { preset: keyof typeof PRESETS }) {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [creating, setCreating] = useState(false);
-  const { data, error } = useAsync(() => get(`/licenses${qs({ ...p.query, status: p.query.status || status, search })}`), [preset, search, status]);
+  const { data, error, reload } = useAsync(() => get(`/licenses${qs({ ...p.query, status: p.query.status || status, search })}`), [preset, search, status]);
+  const { busy, msg, run } = useAction();
+
+  const deleteLicense = async (r: any, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!canDeleteLicense(r)) return;
+    const reason = await promptDialog(`Permanently delete ${r.license_key}? Installations and history for this key are removed. Audit log keeps a record.`, {
+      title: 'Delete license from history?',
+      label: 'Reason (optional)',
+      placeholder: 'Why remove this license?',
+      danger: true,
+      confirmText: 'Delete',
+    });
+    if (reason === null) return;
+    await run(async () => {
+      await del(`/licenses/${r.id}`, { reason: reason || undefined });
+      reload();
+    }, `Deleted ${r.license_key}`);
+  };
+
   return (
     <div>
       <PageHeader title={p.title} subtitle={p.subtitle} actions={<>
@@ -83,6 +113,7 @@ export function LicensesPage({ preset }: { preset: keyof typeof PRESETS }) {
         {can('ADMIN') && preset !== 'trials' && <Button tone="primary" onClick={() => setCreating(true)}><Plus className="w-3.5 h-3.5" />Issue license</Button>}
       </>} />
       <Alert>{error}</Alert>
+      <Alert tone={msg?.tone}>{msg?.text}</Alert>
       <Table rows={data?.data} onRow={(r) => nav('licenses', r.id)} columns={[
         { key: 'license_key', label: 'License', render: (r) => <span className="font-mono">{r.license_key}</span> },
         { key: 'customer_name', label: 'Customer', render: (r) => <><div className="font-semibold">{r.business_name || r.customer_name}</div><div className="text-[10px] text-slate-400">{r.customer_email}</div></> },
@@ -93,6 +124,22 @@ export function LicensesPage({ preset }: { preset: keyof typeof PRESETS }) {
         { key: 'starts_at', label: 'Start', render: (r) => fmtDate(r.starts_at) },
         { key: 'expires_at', label: 'Expires', render: (r) => (r.expires_at ? fmtDate(r.expires_at) : 'Lifetime') },
         { key: 'payment', label: 'Paid', render: (r) => fmtINR(r.payment_amount_paise) },
+        ...(can('ADMIN') ? [{
+          key: 'actions',
+          label: 'Action',
+          className: 'w-16 text-right',
+          render: (r: any) => canDeleteLicense(r) ? (
+            <button
+              type="button"
+              disabled={busy}
+              title="Delete from history"
+              onClick={(e) => { void deleteLicense(r, e); }}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition disabled:opacity-40"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          ) : <span className="text-[10px] text-slate-300">—</span>,
+        }] : []),
       ]} />
       {creating && <CreateLicenseModal onClose={() => setCreating(false)} onCreated={(l) => { setCreating(false); nav('licenses', l.id); }} />}
     </div>
@@ -136,6 +183,18 @@ export function LicenseDetail({ id }: { id: string }) {
               {can('ADMIN') && l.status === 'ACTIVE' && <Button tone="warning" onClick={() => confirmAct('suspend', 'Suspend license')}>Suspend</Button>}
               {can('ADMIN') && l.status === 'SUSPENDED' && <Button tone="primary" onClick={() => act('reactivate', {}, 'License reactivated')}>Reactivate</Button>}
               {can('ADMIN') && l.status !== 'REVOKED' && <Button tone="danger" onClick={() => confirmAct('revoke', 'Revoke license permanently')}>Revoke</Button>}
+              {can('ADMIN') && canDeleteLicense({ ...l, installations: data.installations }) && (
+                <Button tone="danger" busy={busy} onClick={async () => {
+                  const reason = await promptDialog(`Permanently delete ${l.license_key}? This removes the key and its installations from the license server.`, {
+                    title: 'Delete license from history?', label: 'Reason (optional)', placeholder: 'Why remove this license?', danger: true, confirmText: 'Delete',
+                  });
+                  if (reason === null) return;
+                  await run(async () => {
+                    await del(`/licenses/${id}`, { reason: reason || undefined });
+                    nav(l.type === 'TRIAL' ? 'trials' : 'paid');
+                  }, 'License deleted');
+                }}><Trash2 className="w-3.5 h-3.5" />Delete</Button>
+              )}
             </>} />
           <div className="grid md:grid-cols-4 gap-3">
             <Card title="License key">

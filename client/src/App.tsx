@@ -12,7 +12,7 @@ import { Sidebar } from './components/layout/Sidebar.js';
 
 // Phase 1 Pages
 import { LoginPage } from './pages/auth/LoginPage.js';
-import { RegisterPage } from './pages/auth/RegisterPage.js';
+import { RegisterPage, type SignupDraft } from './pages/auth/RegisterPage.js';
 import { DashboardPage } from './pages/dashboard/DashboardPage.js';
 import { PosBillingPage } from './pages/billing/PosBillingPage.js';
 import { InvoicesPage } from './pages/invoices/InvoicesPage.js';
@@ -57,6 +57,7 @@ function MainApp() {
   const { user, initializing } = useAuth();
   const { system, license, loading: licenseLoading, hasFeature, adminLocked } = useLicense();
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
+  const [signupDraft, setSignupDraft] = useState<SignupDraft | null>(null);
   const [activePage, setActivePage] = useState<string>('dashboard');
 
   // Check URL query parameters for public store view (e.g. ?store=apna-supermart)
@@ -92,12 +93,26 @@ function MainApp() {
     );
   }
 
-  // Sign in or create an account before any license step.
+  // Sign In / Sign Up toggle first; business category setup comes after Sign Up basics.
   if (!user) {
-    if (system?.setupRequired || authView === 'register') {
-      return <RegisterPage onNavigateToLogin={system?.setupRequired ? undefined : () => setAuthView('login')} />;
+    if (authView === 'register' && signupDraft) {
+      return (
+        <RegisterPage
+          account={signupDraft}
+          onNavigateToLogin={() => setAuthView('login')}
+        />
+      );
     }
-    return <LoginPage onNavigateToRegister={() => setAuthView('register')} />;
+    return (
+      <LoginPage
+        setupRequired={!!system?.setupRequired}
+        initialMode={signupDraft || system?.setupRequired ? 'signup' : 'signin'}
+        onContinueSignup={(draft) => {
+          setSignupDraft(draft);
+          setAuthView('register');
+        }}
+      />
+    );
   }
 
   // A new account, or one that has not purchased, chooses a free trial or a license key.
@@ -109,11 +124,11 @@ function MainApp() {
   }
 
   return (
-    <div className="app-canvas h-screen flex overflow-hidden text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200">
+    <div className="app-canvas h-full min-h-0 flex overflow-hidden text-slate-900 dark:text-slate-100 font-sans transition-colors duration-200">
       {/* Sidebar Navigation */}
       <Sidebar activePage={activePage} onNavigate={setActivePage} />
 
-      {/* Main Content Area */}
+      {/* Main Content Area — sits under the desktop title bar (never underlaps it) */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         <Navbar activePage={activePage} onNavigate={setActivePage} />
         <LicenseBanner onOpen={() => setActivePage('license')} />

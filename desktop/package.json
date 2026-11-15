@@ -1,0 +1,78 @@
+{
+  "name": "apna-billing-desktop",
+  "productName": "Apna Billing",
+  "version": "1.1.0",
+  "description": "Apna Billing — offline-first GST billing and business management",
+  "author": "Apna Billing",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "prepare-app": "node scripts/prepare.cjs",
+    "start": "npm run prepare-app && electron .",
+    "dist": "npm run prepare-app && electron-builder --win nsis --x64",
+    "dist:dir": "npm run prepare-app && electron-builder --win dir --x64"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "11.10.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "exceljs": "4.4.0",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.2"
+  },
+  "build": {
+    "appId": "in.apnabilling.desktop",
+    "productName": "Apna Billing",
+    "copyright": "Copyright © 2026 Apna Billing",
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "app/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "npmRebuild": true,
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "ApnaBilling-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Apna Billing",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^35.7.5",
+    "electron-builder": "^26.18.0"
+  }
+}

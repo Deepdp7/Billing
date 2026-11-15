@@ -12,6 +12,7 @@ exports.getSupplierLedger = getSupplierLedger;
 exports.getPurchases = getPurchases;
 exports.getPurchaseById = getPurchaseById;
 exports.createPurchase = createPurchase;
+exports.deletePurchase = deletePurchase;
 exports.getPurchaseOrders = getPurchaseOrders;
 exports.getPurchaseOrderById = getPurchaseOrderById;
 exports.createPurchaseOrder = createPurchaseOrder;
@@ -263,6 +264,40 @@ function createPurchase(req, res) {
     (0, auditService_js_1.logAudit)({ businessId: req.businessId, userId: req.user?.userId, action: 'PURCHASE_RECORDED', entityType: 'PURCHASE', entityId: result.id,
         details: { supplier: input.supplierName, number: input.purchaseNumber, totalPaise: result.total } });
     res.status(201).json({ message: 'Purchase recorded and stock updated successfully', purchaseId: result.id });
+}
+/** Delete a purchase bill: reverse stock, undo supplier dues, remove payment rows. */
+function deletePurchase(req, res) {
+    const businessId = req.businessId;
+    const purchase = connection_js_1.db.prepare('SELECT * FROM purchase_invoices WHERE id = ? AND business_id = ?').get(req.params.id, businessId);
+    if (!purchase)
+        throw new http_js_1.HttpError(404, 'NOT_FOUND', 'Purchase not found');
+    const returns = connection_js_1.db.prepare('SELECT COUNT(*) AS c FROM debit_notes WHERE purchase_id = ? AND business_id = ?').get(purchase.id, businessId);
+    if (returns.c > 0)
+        throw new http_js_1.HttpError(409, 'HAS_RETURNS', 'This purchase has returns recorded. Remove those first.');
+    connection_js_1.db.transaction(() => {
+        const items = connection_js_1.db.prepare('SELECT * FROM purchase_items WHERE purchase_id = ? AND business_id = ?').all(purchase.id, businessId);
+        for (const it of items) {
+            if (!it.product_id)
+                continue;
+            connection_js_1.db.prepare("UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = datetime('now') WHERE id = ?")
+                .run(it.quantity, it.product_id);
+            connection_js_1.db.prepare(`INSERT INTO stock_movements (id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes)
+                  VALUES (?, ?, ?, ?, (SELECT stock_quantity FROM products WHERE id = ?), 'PURCHASE_DELETE', ?, ?)`)
+                .run(crypto_1.default.randomUUID(), businessId, it.product_id, -it.quantity, it.product_id, purchase.id, `Deleted purchase ${purchase.purchase_number}`);
+        }
+        if (purchase.supplier_id) {
+            const unpaid = purchase.total_paise - purchase.amount_paid_paise;
+            if (unpaid > 0) {
+                connection_js_1.db.prepare("UPDATE suppliers SET outstanding_balance_paise = outstanding_balance_paise - ?, updated_at = datetime('now') WHERE id = ?")
+                    .run(unpaid, purchase.supplier_id);
+            }
+        }
+        connection_js_1.db.prepare("DELETE FROM payments WHERE purchase_id = ? AND business_id = ?").run(purchase.id, businessId);
+        connection_js_1.db.prepare('DELETE FROM purchase_invoices WHERE id = ? AND business_id = ?').run(purchase.id, businessId);
+    })();
+    (0, auditService_js_1.logAudit)({ businessId, userId: req.user?.userId, action: 'PURCHASE_DELETED', entityType: 'PURCHASE', entityId: purchase.id,
+        details: { number: purchase.purchase_number, supplier: purchase.supplier_name, totalPaise: purchase.total_paise } });
+    res.json({ message: `Purchase ${purchase.purchase_number} deleted`, id: purchase.id });
 }
 // ---------------- Purchase orders ----------------
 const poSchema = zod_1.z.object({

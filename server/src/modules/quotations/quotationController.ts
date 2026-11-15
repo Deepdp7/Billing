@@ -61,6 +61,18 @@ export function createQuotation(req: AuthenticatedRequest, res: Response): void 
   res.status(201).json({ message: 'Quotation created successfully', quotationNumber: quoteNumber, id: quoteId });
 }
 
+/** Remove an estimate. Converted quotes can also be deleted — the linked invoice is left untouched. */
+export function deleteQuotation(req: AuthenticatedRequest, res: Response): void {
+  const businessId = req.businessId!;
+  const quote = db.prepare('SELECT * FROM quotations WHERE id = ? AND business_id = ?').get(req.params.id, businessId) as any;
+  if (!quote) throw new HttpError(404, 'NOT_FOUND', 'Quotation not found');
+  db.transaction(() => {
+    db.prepare('DELETE FROM quotation_items WHERE quotation_id = ? AND business_id = ?').run(quote.id, businessId);
+    db.prepare('DELETE FROM quotations WHERE id = ? AND business_id = ?').run(quote.id, businessId);
+  })();
+  res.json({ message: `Quotation ${quote.quotation_number} deleted`, id: quote.id });
+}
+
 /** Convert a quotation to a real invoice through the invoice service (stock, GST and payments handled consistently). */
 export function convertToInvoice(req: AuthenticatedRequest, res: Response): void {
   const businessId = req.businessId!;

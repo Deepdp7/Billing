@@ -1,0 +1,36 @@
+/** Which licensed feature each page needs. Pages not listed (settings, backup, support, license) are always available. */
+export const PAGE_FEATURES: Record<string, string> = {
+  dashboard: 'dashboard',
+  billing: 'billing',
+  'online-orders': 'online_store',
+  invoices: 'invoices',
+  products: 'products',
+  inventory: 'inventory',
+  wholesale: 'wholesale',
+  services: 'services',
+  loyalty: 'loyalty',
+  returns: 'returns',
+  purchases: 'purchases',
+  expenses: 'expenses',
+  reports: 'reports_basic',
+  quotations: 'quotations',
+  customers: 'customers',
+  staff: 'staff',
+  restaurant: 'restaurant',
+  pharmacy: 'pharmacy',
+  clothing: 'clothing',
+  manufacturing: 'manufacturing',
+  school: 'school',
+  barcodes: 'barcodes',
+  branches: 'branches',
+  'audit-logs': 'audit_logs',
+};
+
+export const FEATURE_LABELS: Record<string, string> = {
+  dashboard: 'Dashboard', billing: 'POS Billing', invoices: 'Invoice Management', customers: 'Customer Management', products: 'Product Management',
+  inventory: 'Inventory', purchases: 'Purchase Management', expenses: 'Expense Management', quotations: 'Quotations', returns: 'Returns & Credit Notes',
+  staff: 'Staff Management', reports_basic: 'Basic Reports', reports_advanced: 'Advanced Reports', inventory_analytics: 'Inventory Analytics',
+  data_export: 'Excel / CSV Export', pdf_export: 'PDF Export', loyalty: 'Loyalty & Rewards', branches: 'Branches & Transfers', barcodes: 'Barcode Labels',
+  audit_logs: 'Audit Logs', restaurant: 'Restaurant', pharmacy: 'Pharmacy', clothing: 'Clothing', manufacturing: 'Manufacturing', school: 'School Fees',
+  wholesale: 'Wholesale', services: 'Service Business', online_store: 'Online Store',
+};

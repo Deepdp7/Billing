@@ -5,17 +5,13 @@ import App from './App.tsx'
 import { DialogHost } from './components/ui/dialogs.tsx'
 import { DesktopFrame } from './components/layout/TitleBar.tsx'
 import { isDesktopApp } from './lib/desktop.ts'
+import { installDesktopShield } from './lib/desktopShield.ts'
 
 if (isDesktopApp()) {
   document.documentElement.classList.add('tauri-shell')
-  // WebView2 otherwise lets two-finger gestures drag the whole page sideways.
-  const lockPan = (e: WheelEvent | TouchEvent) => {
-    if (e instanceof WheelEvent && Math.abs(e.deltaX) > Math.abs(e.deltaY)) e.preventDefault()
-  }
-  window.addEventListener('wheel', lockPan, { passive: false })
-  window.addEventListener('touchmove', (e) => {
-    if (e.touches.length > 1) e.preventDefault()
-  }, { passive: false })
+  // Block browser/WebView chrome (Ctrl+Shift+R, F5, zoom, DevTools, …).
+  // Typing, copy/paste, scroll, and window min/max/close stay enabled.
+  installDesktopShield()
 }
 
 createRoot(document.getElementById('root')!).render(

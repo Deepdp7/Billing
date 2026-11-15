@@ -164,6 +164,8 @@ export const api = {
       body: JSON.stringify(data),
     }),
   getPurchases: () => request<{ data: any[] }>('/app/purchases'),
+  deletePurchase: (id: string) =>
+    request<{ message: string }>(`/app/purchases/${id}`, { method: 'DELETE' }),
   createPurchase: (data: any) =>
     request<any>('/app/purchases', {
       method: 'POST',
@@ -222,6 +224,8 @@ export const api = {
     request<any>(`/app/quotations/${id}/convert`, {
       method: 'POST',
     }),
+  deleteQuotation: (id: string) =>
+    request<{ message: string }>(`/app/quotations/${id}`, { method: 'DELETE' }),
 
   // Verticals: Restaurant
   getRestaurantTables: () => request<{ data: any[] }>('/app/verticals/restaurant/tables'),
@@ -663,6 +667,7 @@ export const api = {
   duplicateInvoice: (id: string) => request<{ invoice: any }>(`/app/billing/invoices/${id}/duplicate`, { method: 'POST', body: '{}' }),
   issueDraft: (id: string, data: any) => request<{ invoice: any }>(`/app/billing/invoices/${id}/issue`, { method: 'POST', body: JSON.stringify(data) }),
   deleteDraft: (id: string) => request<any>(`/app/billing/invoices/${id}/draft`, { method: 'DELETE' }),
+  deleteInvoice: (id: string) => request<{ message: string }>(`/app/billing/invoices/${id}`, { method: 'DELETE' }),
   searchInvoices: (params: Record<string, string | number | undefined>) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') q.append(k, String(v));

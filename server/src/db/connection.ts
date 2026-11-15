@@ -1,13 +1,15 @@
-import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { config } from '../config/index.js';
 import { runMigrations } from './migrations.js';
+import { databaseKey, ensureDatabaseEncrypted, openDatabase, SqliteDatabase } from './sqlite.js';
 
 fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
 
-export const db: Database.Database = new Database(config.dbPath);
+ensureDatabaseEncrypted(config.dbPath);
+
+export const db: SqliteDatabase = openDatabase(config.dbPath, databaseKey());
 
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
@@ -27,4 +29,4 @@ const result = runMigrations(db, {
   },
 });
 
-console.log(`[Database] SQLite ready at ${config.dbPath} (schema v${result.to})`);
+console.log(`[Database] SQLite ready at ${config.dbPath} (schema v${result.to}${databaseKey() ? ', encrypted' : ''})`);

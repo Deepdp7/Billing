@@ -1,0 +1,32 @@
+[package]
+name = "apna-billing"
+version = "1.2.0"
+description = "Apna Billing desktop shell"
+edition = "2021"
+
+[lib]
+name = "apna_billing_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
+serde_json = "1"
+sha2 = "0.10"
+hmac = "0.12"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

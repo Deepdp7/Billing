@@ -1,17 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { BusinessCategory } from '../../types/index.js';
-import { 
-  Zap, ShoppingBag, UtensilsCrossed, Pill, Shirt, 
-  Truck, Wrench, Factory, GraduationCap, ArrowLeft, ArrowRight 
+import {
+  Zap, ShoppingBag, UtensilsCrossed, Pill, Shirt,
+  Truck, Wrench, Factory, GraduationCap, ArrowLeft, ArrowRight,
 } from 'lucide-react';
 import { Select } from '../../components/ui/Select.js';
 import { ThemeSwitch } from '../../components/ThemeSwitch.js';
-import { clearSessionNotice, takeSessionNotice } from '../../context/LicenseContext.js';
+import { clearSessionNotice, takeSessionNotice, type SessionNotice } from '../../context/LicenseContext.js';
+import { SessionNoticeBanner } from '../../components/system/SessionNoticeBanner.js';
+
+export interface SignupDraft {
+  ownerName: string;
+  email: string;
+  phone: string;
+  password: string;
+}
 
 interface RegisterPageProps {
-  /** Omitted during first-run setup: there is no account to sign in to yet. */
-  onNavigateToLogin?: () => void;
+  account: SignupDraft;
+  onNavigateToLogin: () => void;
 }
 
 const CATEGORIES: Array<{
@@ -19,67 +27,17 @@ const CATEGORIES: Array<{
   title: string;
   desc: string;
   icon: any;
-  color: string;
 }> = [
-  {
-    id: 'GROCERY',
-    title: 'Grocery & Supermarket',
-    desc: 'Rapid barcode scan, loose items, FMCG packaging, weighing scales',
-    icon: ShoppingBag,
-    color: 'emerald',
-  },
-  {
-    id: 'RESTAURANT',
-    title: 'Restaurant & Cafe',
-    desc: 'Table layout, Kitchen Order Tickets (KOT), takeaway billing',
-    icon: UtensilsCrossed,
-    color: 'amber',
-  },
-  {
-    id: 'PHARMACY',
-    title: 'Pharmacy & Medical',
-    desc: 'Medicine batch numbers, expiry tracking, drug schedules',
-    icon: Pill,
-    color: 'blue',
-  },
-  {
-    id: 'CLOTHING',
-    title: 'Clothing & Fashion',
-    desc: 'Apparel variants (Size/Color matrix), barcode tags, exchanges',
-    icon: Shirt,
-    color: 'purple',
-  },
-  {
-    id: 'WHOLESALE',
-    title: 'Wholesale & B2B',
-    desc: 'Tiered bulk pricing, customer credit limits, distributor ledgers',
-    icon: Truck,
-    color: 'indigo',
-  },
-  {
-    id: 'SERVICE',
-    title: 'Service & Repair Center',
-    desc: 'Job cards, labor billing, appointments, service quotations',
-    icon: Wrench,
-    color: 'cyan',
-  },
-  {
-    id: 'MANUFACTURING',
-    title: 'Small Manufacturing',
-    desc: 'Raw materials, Bill of Materials (BOM), production inventory',
-    icon: Factory,
-    color: 'orange',
-  },
-  {
-    id: 'SCHOOL',
-    title: 'School & Institute',
-    desc: 'Fee installments, student ledgers, fee receipts & dues',
-    icon: GraduationCap,
-    color: 'rose',
-  },
+  { id: 'GROCERY', title: 'Grocery & Supermarket', desc: 'Rapid barcode scan, loose items, FMCG packaging, weighing scales', icon: ShoppingBag },
+  { id: 'RESTAURANT', title: 'Restaurant & Cafe', desc: 'Table layout, Kitchen Order Tickets (KOT), takeaway billing', icon: UtensilsCrossed },
+  { id: 'PHARMACY', title: 'Pharmacy & Medical', desc: 'Medicine batch numbers, expiry tracking, drug schedules', icon: Pill },
+  { id: 'CLOTHING', title: 'Clothing & Fashion', desc: 'Apparel variants (Size/Color matrix), barcode tags, exchanges', icon: Shirt },
+  { id: 'WHOLESALE', title: 'Wholesale & B2B', desc: 'Tiered bulk pricing, customer credit limits, distributor ledgers', icon: Truck },
+  { id: 'SERVICE', title: 'Service & Repair Center', desc: 'Job cards, labor billing, appointments, service quotations', icon: Wrench },
+  { id: 'MANUFACTURING', title: 'Small Manufacturing', desc: 'Raw materials, Bill of Materials (BOM), production inventory', icon: Factory },
+  { id: 'SCHOOL', title: 'School & Institute', desc: 'Fee installments, student ledgers, fee receipts & dues', icon: GraduationCap },
 ];
 
-// GST state codes (first two digits of a GSTIN) → state / UT.
 const GST_STATES: Record<string, string> = {
   '01': 'Jammu and Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab', '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana', '07': 'Delhi',
   '08': 'Rajasthan', '09': 'Uttar Pradesh', '10': 'Bihar', '11': 'Sikkim', '12': 'Arunachal Pradesh', '13': 'Nagaland', '14': 'Manipur',
@@ -90,20 +48,15 @@ const GST_STATES: Record<string, string> = {
 };
 const STATE_NAMES = Object.values(GST_STATES).sort();
 
-export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigateToLogin }) => {
+export const RegisterPage: React.FC<RegisterPageProps> = ({ account, onNavigateToLogin }) => {
   const { register, isLoading } = useAuth();
   const [selectedCategory, setSelectedCategory] = useState<BusinessCategory>('GROCERY');
-  const [ownerName, setOwnerName] = useState('');
   const [businessName, setBusinessName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
   const [gstin, setGstin] = useState('');
   const [stateName, setStateName] = useState('');
   const [city, setCity] = useState('');
   const [error, setError] = useState('');
-  // Why the app is back at setup (e.g. the shop was erased), including where its safety backup was saved.
-  const [notice, setNotice] = useState('');
+  const [notice, setNotice] = useState<SessionNotice | null>(null);
   useEffect(() => { setNotice(takeSessionNotice()); }, []);
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -112,31 +65,19 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigateToLogin })
     setError('');
     const missing: string[] = [];
     if (!businessName.trim()) missing.push('business name');
-    if (!ownerName.trim()) missing.push('owner name');
-    if (!email.trim()) missing.push('email');
-    if (!phone.trim()) missing.push('phone number');
-    if (!password) missing.push('password');
     if (!stateName) missing.push('state');
     if (missing.length) {
       setError(`Fill in ${missing.join(', ')} before launching the workspace.`);
       return;
     }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      setError('Enter a valid business email. That email is the sign-in.');
-      return;
-    }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
     try {
       await register({
-        ownerName,
+        ownerName: account.ownerName,
         businessName,
         category: selectedCategory,
-        email,
-        phone,
-        password,
+        email: account.email,
+        phone: account.phone,
+        password: account.password,
         gstin,
         city: city || undefined,
         state: stateName,
@@ -149,21 +90,16 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigateToLogin })
   return (
     <div className="h-dvh w-full max-w-full overflow-y-auto overflow-x-hidden overscroll-none touch-pan-y bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-white p-4 lg:p-8 flex flex-col items-center">
       <div className="max-w-4xl w-full space-y-6">
-        
-        {/* Top Header */}
+
         <div className="flex items-center justify-between">
-          {onNavigateToLogin ? (
-            <button
-              type="button"
-              onClick={onNavigateToLogin}
-              className="flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Back to Sign In</span>
-            </button>
-          ) : (
-            <span className="text-xs font-semibold text-slate-400">First-time setup: create your business and owner login</span>
-          )}
+          <button
+            type="button"
+            onClick={onNavigateToLogin}
+            className="flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back to Sign Up</span>
+          </button>
 
           <div className="flex items-center gap-3">
             <ThemeSwitch />
@@ -174,20 +110,21 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigateToLogin })
           </div>
         </div>
 
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+          <span className="text-slate-500">1. Account</span>
+          <span className="text-slate-300 dark:text-slate-700">/</span>
+          <span className="text-emerald-600 dark:text-emerald-400">2. Business setup</span>
+        </div>
+
+        <SessionNoticeBanner notice={notice} />
+
         <div className="text-center space-y-1">
-          <h1 className="text-2xl font-bold font-['Outfit']">Step 1: Choose Your Business Category</h1>
+          <h1 className="text-2xl font-bold font-['Outfit']">Choose your business category</h1>
           <p className="text-xs text-slate-400">
             Apna Billing automatically adapts its modules, invoice headers, and fields to your business type.
           </p>
         </div>
 
-        {notice && (
-          <div className="p-3 bg-amber-950/50 border border-amber-700 text-amber-100 text-xs rounded-xl break-words">
-            {notice}
-          </div>
-        )}
-
-        {/* Category Selection Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {CATEGORIES.map((cat) => {
             const Icon = cat.icon;
@@ -222,66 +159,22 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigateToLogin })
           })}
         </div>
 
-        {/* Business Registration Details Form */}
         <form noValidate onSubmit={handleRegister} className="bg-white border border-slate-200 dark:bg-slate-900 dark:border-slate-800 p-6 rounded-2xl shadow-xl space-y-4">
           <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
             <h2 className="text-sm font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider">
-              Step 2: Business & Owner Details ({selectedCategory})
+              Business details ({selectedCategory})
             </h2>
+            <p className="text-[11px] text-slate-400 mt-1">Signed in as {account.email}</p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
+            <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Business / Store Name *</label>
               <input
                 type="text"
                 placeholder="e.g. Royal Enterprise"
                 value={businessName}
                 onChange={(e) => setBusinessName(e.target.value)}
-                className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 dark:bg-slate-800/80 dark:border-slate-700 dark:text-white focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Owner / Manager Name *</label>
-              <input
-                type="text"
-                placeholder="e.g. Amit Sharma"
-                value={ownerName}
-                onChange={(e) => setOwnerName(e.target.value)}
-                className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 dark:bg-slate-800/80 dark:border-slate-700 dark:text-white focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Business Email (Sign in) *</label>
-              <input
-                type="email"
-                placeholder="store@business.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 dark:bg-slate-800/80 dark:border-slate-700 dark:text-white focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Phone Number *</label>
-              <input
-                type="text"
-                placeholder="+91 9876543210"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 dark:bg-slate-800/80 dark:border-slate-700 dark:text-white focus:outline-none focus:border-emerald-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">Password *</label>
-              <input
-                type="password"
-                placeholder="At least 8 characters"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 dark:bg-slate-800/80 dark:border-slate-700 dark:text-white focus:outline-none focus:border-emerald-500"
               />
             </div>
@@ -312,6 +205,17 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onNavigateToLogin })
                 <option value="">Select state…</option>
                 {STATE_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
               </Select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">City (Optional)</label>
+              <input
+                type="text"
+                placeholder="e.g. Mumbai"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 dark:bg-slate-800/80 dark:border-slate-700 dark:text-white focus:outline-none focus:border-emerald-500"
+              />
             </div>
           </div>
 

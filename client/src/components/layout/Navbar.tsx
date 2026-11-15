@@ -22,7 +22,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate }) => {
   const [showLangMenu, setShowLangMenu] = useState(false);
 
   return (
-    <header className="h-16 shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md z-30 px-4 lg:px-6 flex items-center justify-between gap-3">
+    <header className="relative z-20 h-14 shrink-0 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 lg:px-6 flex items-center justify-between gap-3">
       {/* Left: Active Business Badge */}
       <div className="flex items-center gap-3 min-w-0">
         {user?.businessName ? (

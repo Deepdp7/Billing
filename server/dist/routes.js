@@ -126,6 +126,7 @@ appRouter.post('/billing/invoices/:id/duplicate', billingCtrl.duplicateInvoice);
 appRouter.put('/billing/invoices/:id/draft', billingCtrl.updateDraft);
 appRouter.post('/billing/invoices/:id/issue', billingCtrl.issueDraft);
 appRouter.delete('/billing/invoices/:id/draft', billingCtrl.deleteDraft);
+appRouter.delete('/billing/invoices/:id', billingCtrl.deleteInvoice);
 appRouter.get('/billing/payments', billingCtrl.getPayments);
 appRouter.get('/billing/held', billingCtrl.getHeldBills);
 appRouter.post('/billing/held', billingCtrl.holdBill);
@@ -154,6 +155,7 @@ appRouter.get('/suppliers/:id/ledger', purchaseCtrl.getSupplierLedger);
 appRouter.get('/purchases', purchaseCtrl.getPurchases);
 appRouter.post('/purchases', purchaseCtrl.createPurchase);
 appRouter.get('/purchases/:id', purchaseCtrl.getPurchaseById);
+appRouter.delete('/purchases/:id', purchaseCtrl.deletePurchase);
 appRouter.get('/purchase-orders', purchaseCtrl.getPurchaseOrders);
 appRouter.post('/purchase-orders', purchaseCtrl.createPurchaseOrder);
 appRouter.get('/purchase-orders/:id', purchaseCtrl.getPurchaseOrderById);
@@ -180,6 +182,7 @@ appRouter.put('/staff/:id/status', staffCtrl.toggleStaffStatus);
 // Growth: Quotations
 appRouter.get('/quotations', quoteCtrl.getQuotations);
 appRouter.post('/quotations', quoteCtrl.createQuotation);
+appRouter.delete('/quotations/:id', quoteCtrl.deleteQuotation);
 appRouter.post('/quotations/:id/convert', quoteCtrl.convertToInvoice);
 // Verticals: Restaurant & Pharmacy & Notifications
 appRouter.get('/verticals/restaurant/tables', vertCtrl.getTables);

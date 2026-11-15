@@ -78,6 +78,21 @@ export const QuotationsPage: React.FC<{ onNavigateToInvoices: () => void }> = ({
     }
   };
 
+  const handleDelete = async (id: string, num: string, status: string) => {
+    const note = status === 'CONVERTED'
+      ? `Delete estimate "${num}"? The linked tax invoice (if any) stays in Invoice History.`
+      : `Delete estimate "${num}"? This cannot be undone.`;
+    if (!(await confirmDialog(note, { danger: true }))) return;
+    try {
+      await api.deleteQuotation(id);
+      setStatusMsg(`Estimate ${num} deleted.`);
+      setTimeout(() => setStatusMsg(''), 4000);
+      loadQuotations();
+    } catch (err: any) {
+      showAlert(err.message || 'Failed to delete quotation');
+    }
+  };
+
   return (
     <div className="p-4 lg:p-8 space-y-6 max-w-7xl mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -140,17 +155,27 @@ export const QuotationsPage: React.FC<{ onNavigateToInvoices: () => void }> = ({
                     </span>
                   </td>
                   <td className="p-3.5 text-right">
-                    {q.status !== 'CONVERTED' ? (
+                    <div className="inline-flex items-center justify-end gap-1.5">
+                      {q.status !== 'CONVERTED' ? (
+                        <button
+                          onClick={() => handleConvert(q.id, q.quotation_number)}
+                          className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
+                        >
+                          <span>Convert to Invoice</span>
+                          <ArrowRightCircle className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-emerald-600 font-bold">Invoiced</span>
+                      )}
                       <button
-                        onClick={() => handleConvert(q.id, q.quotation_number)}
-                        className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1"
+                        type="button"
+                        onClick={() => handleDelete(q.id, q.quotation_number, q.status)}
+                        className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 text-slate-400 hover:text-red-600 transition"
+                        title="Delete quotation"
                       >
-                        <span>Convert to Invoice</span>
-                        <ArrowRightCircle className="w-3.5 h-3.5" />
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
-                    ) : (
-                      <span className="text-[10px] text-emerald-600 font-bold">Invoiced</span>
-                    )}
+                    </div>
                   </td>
                 </tr>
               ))

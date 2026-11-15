@@ -21,8 +21,11 @@ license-server/dist/
 desktop/app/
 desktop/release/
 
-# Tauri shell
+# Tauri shell (tauri/engine and tauri/build are produced by tauri/scripts/prepare.cjs)
 tauri/app/
+tauri/engine/
+tauri/build/
+native/apna-core/target/
 tauri/src-tauri/target/
 tauri/src-tauri/gen/
 admin-tauri/src-tauri/target/

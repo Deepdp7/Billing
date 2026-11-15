@@ -6,7 +6,7 @@ import {
   Truck, Plus, Search, CheckCircle, PackagePlus, 
   Building2, X, PlusCircle, Trash2 
 } from 'lucide-react';
-import { showAlert } from '../../components/ui/dialogs.js';
+import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
 export const PurchasesPage: React.FC = () => {
@@ -207,6 +207,7 @@ export const PurchasesPage: React.FC = () => {
                 <th className="p-3.5 text-right">GST Tax</th>
                 <th className="p-3.5 text-right">Bill Total</th>
                 <th className="p-3.5 text-center">Status</th>
+                <th className="p-3.5 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -234,11 +235,31 @@ export const PurchasesPage: React.FC = () => {
                         {p.payment_status}
                       </span>
                     </td>
+                    <td className="p-3.5 text-right">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!(await confirmDialog(`Delete purchase bill "${p.purchase_number}"? Stock will be reduced and supplier dues adjusted.`, { danger: true }))) return;
+                          try {
+                            await api.deletePurchase(p.id);
+                            setStatusMsg(`Purchase ${p.purchase_number} deleted.`);
+                            setTimeout(() => setStatusMsg(''), 4000);
+                            loadData();
+                          } catch (err: any) {
+                            showAlert(err.message || 'Failed to delete purchase');
+                          }
+                        }}
+                        className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 text-slate-400 hover:text-red-600 transition"
+                        title="Delete purchase bill"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-400">
+                  <td colSpan={8} className="py-8 text-center text-slate-400">
                     No purchase invoices recorded yet. Click "Record Inward Purchase" to restock inventory!
                   </td>
                 </tr>

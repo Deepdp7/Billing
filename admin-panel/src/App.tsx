@@ -2,8 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   LayoutDashboard, Users, MonitorSmartphone, Hourglass, BadgeIndianRupee, Layers, ToggleRight, BarChart3, History,
   PauseCircle, CalendarX, Megaphone, ScrollText, Settings, UserCog, LogOut, Zap, KeyRound,
-  Eye, EyeOff, ArrowRight, Radio, Building2,
-} from 'lucide-react';
+  Eye, EyeOff, ArrowRight, Radio, Building2, Rocket } from 'lucide-react';
 import { api, post, session, setUnauthorizedHandler } from './api';
 import { Button, cx } from './components/ui';
 import { OverviewPage } from './pages/Overview';
@@ -14,6 +13,7 @@ import { PlansPage } from './pages/Plans';
 import { FeaturesPage } from './pages/Features';
 import { UsagePage } from './pages/Usage';
 import { EventsPage, NoticesPage, AuditPage, SettingsPage, AdminUsersPage, SecurityPage } from './pages/Admin';
+import { UpdatesPage } from './pages/Updates';
 import { LiveFeed } from './live';
 import { ThemeSwitch } from './theme';
 
@@ -40,6 +40,7 @@ const NAV: Array<{ page: string; label: string; icon: any; min?: Role; group: st
   { page: 'plans', label: 'Subscription Plans', icon: Layers, group: 'Control' },
   { page: 'features', label: 'Feature Permissions', icon: ToggleRight, group: 'Control' },
   { page: 'notices', label: 'Notifications', icon: Megaphone, group: 'Control' },
+  { page: 'updates', label: 'App Updates', icon: Rocket, min: 'OWNER', group: 'Control' },
   { page: 'audit', label: 'Audit Logs', icon: ScrollText, min: 'ADMIN', group: 'System' },
   { page: 'settings', label: 'System Settings', icon: Settings, group: 'System' },
   { page: 'admins', label: 'Admin Users', icon: UserCog, min: 'OWNER', group: 'System' },
@@ -243,6 +244,7 @@ export function App() {
     case 'usage': content = <UsagePage />; break;
     case 'events': content = <EventsPage />; break;
     case 'notices': content = <NoticesPage />; break;
+    case 'updates': content = <UpdatesPage />; break;
     case 'audit': content = <AuditPage />; break;
     case 'settings': content = <SettingsPage />; break;
     case 'admins': content = <AdminUsersPage />; break;

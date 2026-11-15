@@ -44,6 +44,7 @@ exports.recordPayment = recordPayment;
 exports.updateDraft = updateDraft;
 exports.issueDraft = issueDraft;
 exports.deleteDraft = deleteDraft;
+exports.deleteInvoice = deleteInvoice;
 exports.duplicateInvoice = duplicateInvoice;
 exports.getPayments = getPayments;
 exports.getHeldBills = getHeldBills;
@@ -87,6 +88,10 @@ function issueDraft(req, res) {
 function deleteDraft(req, res) {
     invoiceService.deleteDraft(req.businessId, uid(req), req.params.id);
     res.json({ message: 'Draft deleted' });
+}
+function deleteInvoice(req, res) {
+    invoiceService.deleteInvoice(req.businessId, uid(req), req.params.id);
+    res.json({ message: 'Invoice removed from history' });
 }
 function duplicateInvoice(req, res) {
     res.status(201).json({ message: 'Draft copy created', invoice: invoiceService.duplicateInvoice(req.businessId, uid(req), req.params.id) });

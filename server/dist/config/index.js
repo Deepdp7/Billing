@@ -67,6 +67,23 @@ function resolveJwtSecret() {
     return secret;
 }
 const demoFlag = process.env.APNA_DEMO_MODE;
+function resolveClientDistDir() {
+    const candidates = [];
+    if (process.env.APNA_CLIENT_DIST)
+        candidates.push(path_1.default.resolve(process.env.APNA_CLIENT_DIST));
+    // Normal: server/ and client/ are siblings; cwd is server/ or tauri/.
+    candidates.push(path_1.default.resolve(process.cwd(), '..', 'client', 'dist'));
+    candidates.push(path_1.default.resolve(process.cwd(), 'client', 'dist'));
+    // Debug shell often starts with cwd = tauri/src-tauri.
+    candidates.push(path_1.default.resolve(process.cwd(), '..', '..', 'client', 'dist'));
+    // Absolute from this package (server/dist/config → ../../client/dist).
+    candidates.push(path_1.default.resolve(__dirname, '..', '..', '..', 'client', 'dist'));
+    for (const dir of candidates) {
+        if (fs_1.default.existsSync(path_1.default.join(dir, 'index.html')))
+            return dir;
+    }
+    return candidates[0];
+}
 exports.config = {
     port: parseInt(process.env.PORT || '5000', 10),
     // Bind to loopback only: the API must not be reachable from other machines on the shop network.
@@ -83,7 +100,9 @@ exports.config = {
     // A desktop install hosts exactly one business; self-registration closes after first setup.
     singleTenant: embedded || (process.env.APNA_SINGLE_TENANT ? process.env.APNA_SINGLE_TENANT === '1' : isProduction),
     // Directory holding the built client (served by Express in production / desktop).
-    clientDistDir: process.env.APNA_CLIENT_DIST || path_1.default.resolve(process.cwd(), '..', 'client', 'dist'),
+    // Prefer APNA_CLIENT_DIST (set by the Tauri shell). Fall back across likely repo layouts so a
+    // wrong process.cwd() cannot leave the window on Express's blank "Cannot GET /".
+    clientDistDir: resolveClientDistDir(),
     licensing: {
         serverUrl: (process.env.APNA_LICENSE_SERVER_URL || 'http://127.0.0.1:7000').replace(/\/$/, ''),
         // Set to '0' only for local development without a license server.

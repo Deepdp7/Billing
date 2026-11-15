@@ -4,7 +4,7 @@ import { Invoice } from '../../types/index.js';
 import { formatINR, formatDate } from '../../lib/utils.js';
 import { InvoiceModal } from '../../components/billing/InvoiceModal.js';
 import { 
-  Search, Eye, Printer, XCircle, FileText, 
+  Search, Printer, FileText, 
   CheckCircle, AlertCircle, RefreshCw, IndianRupee, Copy, Download, FileCheck2, Trash2
 } from 'lucide-react';
 import { confirmDialog } from '../../components/ui/dialogs.js';
@@ -64,14 +64,33 @@ export const InvoicesPage: React.FC = () => {
     setBusy(true);
     try {
       await api.cancelInvoiceWithReason(cancelling.id, cancelReason, refundMode || undefined);
-      flash(`Invoice ${cancelling.invoice_number} cancelled: stock restored, payment refunded/reversed and audit entry recorded.`);
+      await api.deleteInvoice(cancelling.id);
+      flash(`Bill ${cancelling.invoice_number} deleted: stock restored, payments reversed, and removed from history.`);
       setCancelling(null);
       setCancelReason('');
       loadInvoices();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to cancel invoice');
+      setErrorMsg(err.message || 'Failed to delete invoice');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const deleteFromHistory = async (inv: Invoice) => {
+    if (inv.status === 'ISSUED') {
+      setCancelling(inv);
+      setCancelReason('');
+      setRefundMode('');
+      return;
+    }
+    if (!(await confirmDialog(`Permanently delete ${inv.invoice_number} from history?`, { danger: true }))) return;
+    try {
+      if (inv.status === 'DRAFT') await api.deleteDraft(inv.id);
+      else await api.deleteInvoice(inv.id);
+      flash(`Bill ${inv.invoice_number} deleted.`);
+      loadInvoices();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to delete');
     }
   };
 
@@ -300,23 +319,18 @@ export const InvoicesPage: React.FC = () => {
                             <Copy className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        {inv.status === 'DRAFT' && (<>
+                        {inv.status === 'DRAFT' && (
                           <button onClick={() => issueDraft(inv)} className="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-400 hover:text-emerald-600 transition" title="Issue draft (cash)">
                             <FileCheck2 className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => deleteDraft(inv)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-600 transition" title="Delete draft">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </>)}
-                        {inv.status === 'ISSUED' && (
-                          <button
-                            onClick={() => { setCancelling(inv); setCancelReason(''); setRefundMode(''); }}
-                            className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 text-slate-400 hover:text-red-600 transition"
-                            title="Cancel Invoice & Restore Stock"
-                          >
-                            <XCircle className="w-3.5 h-3.5" />
-                          </button>
                         )}
+                        <button
+                          onClick={() => (inv.status === 'DRAFT' ? deleteDraft(inv) : deleteFromHistory(inv))}
+                          className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950 text-slate-400 hover:text-red-600 transition"
+                          title={inv.status === 'ISSUED' ? 'Delete bill (restores stock)' : 'Delete from history'}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -354,9 +368,9 @@ export const InvoicesPage: React.FC = () => {
       {cancelling && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 w-full max-w-sm space-y-3 shadow-2xl">
-            <h3 className="font-bold text-sm">Cancel invoice {cancelling.invoice_number}?</h3>
-            <p className="text-xs text-slate-500">Stock is restored, any balance owed is reversed and an audit entry is recorded. This cannot be undone.</p>
-            <textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={2} className={`${inputCls} w-full`} placeholder="Reason for cancellation (required)" />
+            <h3 className="font-bold text-sm">Delete bill {cancelling.invoice_number}?</h3>
+            <p className="text-xs text-slate-500">Stock is restored, payments are reversed, and the bill is removed from history. This cannot be undone.</p>
+            <textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={2} className={`${inputCls} w-full`} placeholder="Reason for deletion (required)" />
             {cancelling.amount_paid_paise > 0 && (
               <Select value={refundMode} onChange={(e) => setRefundMode(e.target.value)} className={`${inputCls} w-full`}>
                 <option value="">Refund {formatINR(cancelling.amount_paid_paise)} via original mode</option>
@@ -365,8 +379,8 @@ export const InvoicesPage: React.FC = () => {
               </Select>
             )}
             <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setCancelling(null)} className="text-xs px-3 py-1.5 rounded-lg border border-slate-300">Keep invoice</button>
-              <button disabled={busy || cancelReason.trim().length < 3} onClick={confirmCancel} className="text-xs px-3 py-1.5 rounded-lg bg-red-600 text-white font-semibold disabled:opacity-50">Cancel invoice</button>
+              <button onClick={() => setCancelling(null)} className="text-xs px-3 py-1.5 rounded-lg border border-slate-300">Keep bill</button>
+              <button disabled={busy || cancelReason.trim().length < 3} onClick={confirmCancel} className="text-xs px-3 py-1.5 rounded-lg bg-red-600 text-white font-semibold disabled:opacity-50">Delete bill</button>
             </div>
           </div>
         </div>

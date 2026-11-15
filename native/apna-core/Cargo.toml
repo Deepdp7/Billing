@@ -1,0 +1,29 @@
+[package]
+name = "apna-core"
+version = "1.0.0"
+description = "Apna Billing licensing core (Node-API module loaded by the packaged engine)"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3", default-features = false, features = ["napi6"] }
+napi-derive = "3"
+ed25519-dalek = "2"
+base64 = "0.22"
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+sha2 = "0.10"
+
+[build-dependencies]
+napi-build = "2"
+base64 = "0.22"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true

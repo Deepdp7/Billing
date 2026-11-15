@@ -49,6 +49,11 @@ export function deleteDraft(req: AuthenticatedRequest, res: Response): void {
   res.json({ message: 'Draft deleted' });
 }
 
+export function deleteInvoice(req: AuthenticatedRequest, res: Response): void {
+  invoiceService.deleteInvoice(req.businessId!, uid(req), req.params.id);
+  res.json({ message: 'Invoice removed from history' });
+}
+
 export function duplicateInvoice(req: AuthenticatedRequest, res: Response): void {
   res.status(201).json({ message: 'Draft copy created', invoice: invoiceService.duplicateInvoice(req.businessId!, uid(req), req.params.id) });
 }

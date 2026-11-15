@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getQuotations = getQuotations;
 exports.createQuotation = createQuotation;
+exports.deleteQuotation = deleteQuotation;
 exports.convertToInvoice = convertToInvoice;
 const uuid_1 = require("uuid");
 const zod_1 = require("zod");
@@ -91,6 +92,18 @@ function createQuotation(req, res) {
         }
     })();
     res.status(201).json({ message: 'Quotation created successfully', quotationNumber: quoteNumber, id: quoteId });
+}
+/** Remove an estimate. Converted quotes can also be deleted — the linked invoice is left untouched. */
+function deleteQuotation(req, res) {
+    const businessId = req.businessId;
+    const quote = connection_js_1.db.prepare('SELECT * FROM quotations WHERE id = ? AND business_id = ?').get(req.params.id, businessId);
+    if (!quote)
+        throw new http_js_1.HttpError(404, 'NOT_FOUND', 'Quotation not found');
+    connection_js_1.db.transaction(() => {
+        connection_js_1.db.prepare('DELETE FROM quotation_items WHERE quotation_id = ? AND business_id = ?').run(quote.id, businessId);
+        connection_js_1.db.prepare('DELETE FROM quotations WHERE id = ? AND business_id = ?').run(quote.id, businessId);
+    })();
+    res.json({ message: `Quotation ${quote.quotation_number} deleted`, id: quote.id });
 }
 /** Convert a quotation to a real invoice through the invoice service (stock, GST and payments handled consistently). */
 function convertToInvoice(req, res) {

@@ -78,21 +78,27 @@
       radial-gradient(720px 420px at -12% 110%, rgba(6, 95, 70, 0.35), transparent 54%);
   }
 
-  /* The desktop window draws its own title bar, so page shells fill the space under it. */
+  /* The desktop window draws its own title bar, so page shells fill the space under it —
+     never 100vh, or the green title bar covers the navbar / sidebar. */
   html.tauri-shell,
-  html.tauri-shell body,
-  html.tauri-shell #root {
+  html.tauri-shell body {
     height: 100%;
     overflow: hidden;
-    overflow-x: hidden;
     overscroll-behavior: none;
     touch-action: pan-y;
+  }
+  html.tauri-shell #root {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
   html.tauri-shell .h-screen,
   html.tauri-shell .min-h-screen,
   html.tauri-shell .h-dvh {
     height: 100% !important;
     min-height: 0 !important;
+    max-height: 100%;
   }
 }
 

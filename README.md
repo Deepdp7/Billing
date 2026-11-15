@@ -2,51 +2,52 @@
 
 All-in-one business billing & management platform.
 
-## Quick Start
+## Install
 
-### 1. Install Dependencies
-Run the standard install command from the root directory (automatically installs root, server, and client dependencies):
 ```bash
-npm install
-```
-*(Or run `npm run install:all`)*
-
-### 2. Start Both Client & Server Concurrently
-Run from the root directory:
-```bash
-npm run dev
+npm run install:all
 ```
 
-This starts:
-- **Backend API Server**: [http://localhost:5000](http://localhost:5000)
-- **Frontend Client**: [http://localhost:3000](http://localhost:3000)
+## Local development (three separate terminals)
 
----
+Each process runs alone — do not start license from Admin or the app.
 
-## Available Root Scripts
+| Terminal | Command | What it runs |
+|---|---|---|
+| 1 | `npm run dev:license` | License API on [http://127.0.0.1:7000](http://127.0.0.1:7000) |
+| 2 | `npm run dev:admin` | Admin desktop window (+ panel on :3100). Needs license already up. |
+| 3 | `npm run dev:app` | Customer billing desktop app (local engine + UI) |
+
+Start **license first**, then Admin and/or the app.
+
+### Browser-only UI (optional)
+
+```bash
+npm run dev:admin:web   # admin panel at http://127.0.0.1:3100 (still needs license on :7000)
+npm run dev             # local API :5000 + web client :3000 (demo; licensing not enforced)
+```
+
+## Other root scripts
 
 | Command | Description |
 |---|---|
-| `npm run dev` | Runs backend server and frontend client concurrently |
-| `npm run dev:server` | Runs backend server in watch mode only |
-| `npm run dev:client` | Runs frontend Vite dev server only |
-| `npm run build` | Builds both frontend and backend |
-| `npm run seed` | Seeds SQLite database with demo data |
-| `npm start` | Starts the production server build |
+| `npm run seed` | Seed demo SQLite data |
+| `npm run test` | Server, native, license-server, and E2E tests |
+| `npm run build` / `npm run build:app` | Desktop installer build |
+| `npm run build:license` | Build license server + admin panel for deploy |
 
----
-
-## Desktop product, licensing & admin panel (v1.1)
+## Project layout
 
 | Folder | What it is |
 |---|---|
-| `server/` | Local API + SQLite (runs inside the desktop app) |
-| `client/` | Desktop UI |
-| `desktop/` | Electron shell and Windows installer (`npm --prefix desktop run dist`) |
-| `license-server/` | Central license API (PostgreSQL) — you host this |
-| `admin-panel/` | Your owner console, served by the license server |
+| `server/` | Local API + SQLite (inside the desktop app) |
+| `client/` | Billing UI |
+| `tauri/` | Customer desktop shell |
+| `license-server/` | Central license API |
+| `admin-panel/` | Owner admin UI |
+| `admin-tauri/` | Admin desktop shell |
+| `native/apna-core/` | Licensing core (Rust) |
 
-- Run everything in development: `npm run install:all` then `npm run dev:all`
-- Tests: `npm test`
-- Deployment, installer build, backup/restore: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
-- What changed and what is tested: [docs/COMPLETION_REPORT.md](docs/COMPLETION_REPORT.md)
+- Deployment: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- Desktop packaging: [docs/DESKTOP_ARCHITECTURE.md](docs/DESKTOP_ARCHITECTURE.md)
+- Status / what is tested: [docs/COMPLETION_REPORT.md](docs/COMPLETION_REPORT.md)

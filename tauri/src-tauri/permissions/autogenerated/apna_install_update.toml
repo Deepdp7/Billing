@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apna-install-update"
+description = "Enables the apna_install_update command without any pre-configured scope."
+commands.allow = ["apna_install_update"]
+
+[[permission]]
+identifier = "deny-apna-install-update"
+description = "Denies the apna_install_update command without any pre-configured scope."
+commands.deny = ["apna_install_update"]

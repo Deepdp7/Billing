@@ -42,3 +42,25 @@ expenses `:id` (PUT/DELETE), `categories`, `analytics`, `export`; `reports`, `re
 4. Auto-update (electron-updater) instead of notice + download link.
 5. Untrack `node_modules/`, `server/dist/`, `server/data/`, credentials files from git (see report §14.8).
 6. A test run left an empty, unactivated `%APPDATA%\ApnaBilling\data` folder on the dev PC (safe to delete).
+
+## 2026-11-02 — VPS, live updates, internet lock, auto-update
+- License server + Admin Panel deployed to the VPS, isolated in `/home/apna-billing` (own user, systemd service
+  `apna-license`, own SQLite DB, HTTPS on port 7443 with a private certificate pinned in the app). See `docs/HOW_TO_RUN.md`.
+- `deploy/apna_vps.py` (npm: `build`, `release`, `deploy:server`, `vps:setup`, `vps:admin`).
+- Signed auto-update (Tauri updater): popup "Install now / Later", required updates without "Later"; pushed instantly.
+- Internet required: full-screen lock while offline (`client/src/components/system/AppGuards.tsx`,
+  `server/src/licensing/connectivity.ts`); a VPS outage alone does not lock shops.
+- Production license-signing key generated (old dev keys in `license-server/keys/old-dev-keys`).
+- Current client version: 1.1.3 (`releases/`). 1.1.0/1.1.1 were withdrawn (their Install-now button lacked permission).
+
+## 2026-11-02 — 1.2.0: sealed engine, encrypted storage, native licensing core
+See `docs/DESKTOP_ARCHITECTURE.md`.
+- Install folder no longer contains Node.js, JavaScript or `node_modules`: `engine/apna-billing-engine.exe` is a Node
+  single-executable app with the bundled server and embedded UI (`tauri/scripts/prepare.cjs`, entry `tauri/sidecar/run-server.cjs`).
+- Shell checks SHA-256 of every engine file before start, clears the engine's environment, hands the DB key over stdin.
+- SQLite → `better-sqlite3-multiple-ciphers` (ChaCha20-Poly1305). Live DB, migration copies and backups encrypted;
+  1.1.x databases/backups encrypted on first start; plain backups still restorable (`server/src/db/sqlite.ts`).
+- Licensing core in Rust (`native/apna-core`): token verification + license evaluation; TS mirror kept for dev/tests.
+- NSIS hooks (`tauri/src-tauri/installer-hooks.nsh`) stop the engine and remove the 1.1.x `app/` folder.
+- New key to back up: `%USERPROFILE%\.apna-billing\data.key` (fingerprint in `deploy/data-key.fingerprint`).
+- Tests: server 71 (incl. `encryption.test.ts`), `npm run test:native` (Rust) 6.
