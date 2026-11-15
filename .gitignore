@@ -33,3 +33,6 @@ admin-tauri/src-tauri/gen/
 
 # Built client installers (python deploy/apna_vps.py build / release)
 releases/
+
+# The VPS address, login user and admin email (this repository is public)
+deploy/vps.json
