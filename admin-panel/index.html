@@ -6,14 +6,27 @@
     <meta name="robots" content="noindex, nofollow" />
     <title>Apna Billing — License Admin</title>
   <script>
-    try { if (localStorage.getItem('apna_admin_theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
+    // The Admin app marks <html data-apna-theme> itself (it remembers the theme on disk); a browser uses localStorage
+    try { if ((document.documentElement.dataset.apnaTheme || localStorage.getItem('apna_admin_theme')) === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
   </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+    <!-- Fonts are bundled (src/main.tsx). #root shows the same start screen as the Admin app's window until the
+         panel is ready: no white flash. -->
+    <style>
+      html, body { background: #f1f5f9; }
+      html.dark, html.dark body { background: #1a1a1c; }
+      .boot { position: fixed; inset: 0; display: grid; place-items: center; font: 15px "Segoe UI", system-ui, sans-serif; color: #0f172a; }
+      html.dark .boot { color: #f1f5f9; }
+      .boot div { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+      .boot img { width: 88px; height: 88px; filter: drop-shadow(0 10px 18px rgba(79, 70, 229, .25)); }
+      .boot b { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+      .boot span { width: 140px; height: 3px; border-radius: 3px; background: #e2e8f0; overflow: hidden; }
+      html.dark .boot span { background: #303034; }
+      .boot i { display: block; width: 40%; height: 100%; border-radius: 3px; background: #6366f1; animation: boot 1s ease-in-out infinite; }
+      @keyframes boot { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+    </style>
   </head>
   <body class="bg-slate-100 text-slate-900 font-sans antialiased dark:bg-slate-950 dark:text-slate-100">
-    <div id="root"></div>
+    <div id="root"><div class="boot"><div><img src="/app-icon.png" alt=""><b>Apna Billing Admin</b><span><i></i></span></div></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

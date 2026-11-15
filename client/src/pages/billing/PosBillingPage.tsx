@@ -10,7 +10,10 @@ import {
   AlertCircle, Sparkles, UserPlus 
 } from 'lucide-react';
 import { Select } from '../../components/ui/Select.js';
+import { confirmDialog, promptDialog } from '../../components/ui/dialogs.js';
+import { findProductByCode, openWithScan, scanBeep, takeScanIntent, useScanner } from '../../lib/scanner.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const PosBillingPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
@@ -56,7 +59,9 @@ export const PosBillingPage: React.FC = () => {
     api.getBusinessSettings().then((r) => setSettings(r.settings)).catch(() => undefined);
   }, []);
 
-  const loadHeldBills = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadHeldBills(true); void loadCatalog(true); void loadCustomers(true); });
+  const loadHeldBills = async (quiet?: unknown) => {
     try {
       const res = await api.getHeldBills();
       setHeldBills(res.data.map((b: any) => ({
@@ -71,7 +76,7 @@ export const PosBillingPage: React.FC = () => {
     }
   };
 
-  const loadCatalog = async () => {
+  const loadCatalog = async (quiet?: unknown) => {
     try {
       const [prodRes, catRes] = await Promise.all([
         api.getProducts({ limit: 200 }),
@@ -84,7 +89,7 @@ export const PosBillingPage: React.FC = () => {
     }
   };
 
-  const loadCustomers = async () => {
+  const loadCustomers = async (quiet?: unknown) => {
     try {
       const res = await api.getCustomers();
       setCustomers(res.data);
@@ -120,22 +125,34 @@ export const PosBillingPage: React.FC = () => {
     });
   };
 
-  // Barcode enter handler
-  const handleBarcodeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!barcodeInput.trim()) return;
-
-    const matched = products.find(
-      (p) => p.barcode === barcodeInput.trim() || p.sku.toLowerCase() === barcodeInput.trim().toLowerCase()
-    );
-
+  // A scanned (or typed) barcode / SKU: add the product to the bill. Products beyond the loaded list are looked up;
+  // a code that is no product yet can be added as one.
+  const addByCode = async (raw: string) => {
+    const code = raw.trim();
+    if (!code) return;
+    let matched: Product | null = products.find((p) => p.barcode === code || p.sku?.toLowerCase() === code.toLowerCase()) || null;
+    if (!matched) matched = await findProductByCode(code).catch(() => null);
     if (matched) {
+      scanBeep(true);
       addToCart(matched);
       setBarcodeInput('');
-    } else {
-      setErrorMsg(`Product with barcode/SKU "${barcodeInput}" not found`);
-      setTimeout(() => setErrorMsg(''), 3000);
+      return;
     }
+    scanBeep(false);
+    if (await confirmDialog(`No product has the code ${code}. Add it as a new product?`, { title: 'Unknown barcode', confirmText: 'Add product', cancelText: 'Not now' })) {
+      openWithScan('products', { kind: 'new-product', code });
+    }
+  };
+  useScanner((code) => { void addByCode(code); return true; });
+  // Opened from a scan elsewhere ("Sell in POS")
+  useEffect(() => {
+    const intent = takeScanIntent('sell');
+    if (intent) void addByCode(intent.code);
+  }, []);
+
+  const handleBarcodeSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void addByCode(barcodeInput);
   };
 
   const updateQuantity = (index: number, newQty: number) => {
@@ -242,16 +259,77 @@ export const PosBillingPage: React.FC = () => {
   const changeDuePaise = paymentMode === 'CASH' ? Math.max(0, tenderedPaise - grandTotalPaise) : 0;
   const balanceDuePaise = Math.max(0, grandTotalPaise - tenderedPaise);
 
+  /**
+   * Who the bill is for, when the cashier typed a name / phone instead of picking a customer from the list.
+   * - Paid in full (Cash, UPI, Card): offer to save them to Customers (or to add the bill to their existing account
+   *   when the phone matches). No is fine: the bill keeps the typed name and phone only.
+   * - Money left on credit: the bill must belong to a customer account, so ask (name first, if none was typed), then
+   *   use their existing account or add them. No cancels the save.
+   * Returns the customer to bill, or null when the bill should not be saved.
+   */
+  const chooseCustomer = async (): Promise<{ id?: string; name: string } | null> => {
+    const typedName = customerName.trim();
+    const walkIn = !typedName || /^walk-?in( customer)?$/i.test(typedName);
+    const phone = customerPhone.trim();
+    const onCredit = balanceDuePaise > 0;
+    if (selectedCustomerId || (!onCredit && walkIn)) return { id: selectedCustomerId || undefined, name: typedName || 'Walk-in Customer' };
+    const owed = formatINR(balanceDuePaise);
+    const justThisBill = { name: typedName, id: undefined };
+
+    let name = typedName;
+    if (walkIn) {
+      const asked = await promptDialog(`${owed} of this bill stays on credit, so it is kept against the customer's name in Customers.`, {
+        title: 'Who is this credit for?', placeholder: 'Customer name', required: true, confirmText: 'Continue',
+      });
+      if (!asked?.trim()) return null;
+      name = asked.trim();
+      setCustomerName(name);
+    }
+
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length >= 6) {
+      const found = (await api.getCustomers({ search: digits.slice(-10), limit: 20 })).data
+        .find((c: any) => String(c.phone || '').replace(/\D/g, '').slice(-10) === digits.slice(-10));
+      if (found) {
+        const ok = await confirmDialog(onCredit
+          ? `${found.name} (${found.phone}) is already in your Customers. Put ${owed} on their account?`
+          : `${found.name} (${found.phone}) is already in your Customers. Add this bill to their account?`, {
+          title: 'Existing customer', confirmText: onCredit ? 'Yes, save bill' : 'Yes, add to their account', cancelText: onCredit ? 'No' : 'No, just this bill',
+        });
+        if (!ok) return onCredit ? null : justThisBill;
+        setSelectedCustomerId(found.id);
+        setCustomerName(found.name);
+        return { id: found.id, name: found.name };
+      }
+    }
+
+    const who = `${name}${phone ? ` (${phone})` : ''}`;
+    const ok = await confirmDialog(onCredit
+      ? `${who} is not in your Customers yet. ${owed} of this bill stays on credit, so ${name} will be added to Customers to keep track of what they owe.`
+      : `${who} is not in your Customers. Save them, so their details and bills are there next time?`, {
+      title: onCredit ? 'Add new customer?' : 'Save this customer?',
+      confirmText: onCredit ? 'Yes, add & save bill' : 'Yes, save customer',
+      cancelText: onCredit ? 'No' : 'No, just this bill',
+    });
+    if (!ok) return onCredit ? null : justThisBill;
+    const { customer } = await api.createCustomer({ name, phone: phone || undefined });
+    setSelectedCustomerId(customer.id);
+    setCustomers((list) => [customer, ...list]);
+    return { id: customer.id, name: customer.name };
+  };
+
   // Checkout Save
   const handleCheckout = async () => {
-    if (cart.length === 0) return;
+    if (cart.length === 0 || isSubmitting) return;
     setIsSubmitting(true);
     setErrorMsg('');
 
     try {
+      const customer = await chooseCustomer();
+      if (!customer) return;
       const payload = {
-        customerId: selectedCustomerId || undefined,
-        customerName: customerName || 'Walk-in Customer',
+        customerId: customer.id,
+        customerName: customer.name,
         customerPhone: customerPhone || undefined,
         items: cart.map((it) => ({
           productId: it.productId,
@@ -312,6 +390,7 @@ export const PosBillingPage: React.FC = () => {
             <input
               ref={barcodeInputRef}
               type="text"
+              data-scan-input
               placeholder="Scan Barcode / Enter SKU (Enter to add)..."
               value={barcodeInput}
               onChange={(e) => setBarcodeInput(e.target.value)}
@@ -662,7 +741,7 @@ export const PosBillingPage: React.FC = () => {
               {changeDuePaise > 0 && <div className="flex justify-between font-semibold text-emerald-600"><span>Change to return:</span><span>{formatINR(changeDuePaise)}</span></div>}
               {balanceDuePaise > 0 && (
                 <div className="flex justify-between font-semibold text-amber-600">
-                  <span>Balance on credit{selectedCustomerId ? '' : ' (select a customer)'}:</span><span>{formatINR(balanceDuePaise)}</span>
+                  <span>Balance on credit{selectedCustomerId ? '' : ' (added to Customers)'}:</span><span>{formatINR(balanceDuePaise)}</span>
                 </div>
               )}
             </div>

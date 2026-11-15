@@ -23,6 +23,10 @@ function createKnex(): Knex {
       afterCreate: (conn: any, done: (err: Error | null, conn: any) => void) => {
         conn.pragma('foreign_keys = ON');
         conn.pragma('journal_mode = WAL');
+        // Safe with WAL (a power cut can lose only the last moment of writes, never corrupt), and much faster
+        conn.pragma('synchronous = NORMAL');
+        // Two writes at the same moment: wait for the other instead of failing with SQLITE_BUSY
+        conn.pragma('busy_timeout = 5000');
         done(null, conn);
       },
     },

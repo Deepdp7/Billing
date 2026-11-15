@@ -4,6 +4,7 @@ import { UserCheck, Plus, Shield, UserX, X, CheckCircle, Mail, Phone } from 'luc
 import { showAlert } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const StaffPage: React.FC = () => {
   const [staffList, setStaffList] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -17,7 +18,9 @@ export const StaffPage: React.FC = () => {
     loadStaff();
   }, []);
 
-  const loadStaff = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadStaff(true); });
+  const loadStaff = async (quiet?: unknown) => {
     try {
       const res = await api.getStaff();
       setStaffList(res.data);

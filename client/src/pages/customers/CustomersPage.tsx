@@ -9,6 +9,7 @@ import {
 import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const CustomersPage: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -42,9 +43,11 @@ export const CustomersPage: React.FC = () => {
     loadCustomers();
   }, [search]);
 
-  const loadCustomers = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadCustomers(true); });
+  const loadCustomers = async (quiet?: unknown) => {
     try {
-      setLoading(true);
+      if (quiet !== true) setLoading(true);
       const res = await api.getCustomers({ search: search || undefined });
       setCustomers(res.data);
     } catch (err) {
@@ -119,6 +122,13 @@ export const CustomersPage: React.FC = () => {
   const receivePayment = async () => {
     if (!payCustomer) return;
     try {
+      if (payCustomer.outstanding_balance_paise < 0) {
+        await api.refundCustomerAdvance(payCustomer.id, { amountPaise: rupeesToPaise(payAmount), mode: payMode, reference: payRef || undefined });
+        setNotice(`${formatINR(rupeesToPaise(payAmount))} advance returned to ${payCustomer.name}`);
+        setPayCustomer(null);
+        loadCustomers();
+        return;
+      }
       const r = await api.receiveCustomerPayment(payCustomer.id, { amountPaise: rupeesToPaise(payAmount), mode: payMode, reference: payRef || undefined });
       const parts = r.allocations.map((a: any) => `${a.invoiceNumber}: ${formatINR(a.amountPaise)}`);
       if (r.advancePaise > 0) parts.push(`advance ${formatINR(r.advancePaise)}`);
@@ -135,6 +145,22 @@ export const CustomersPage: React.FC = () => {
       await downloadFile(`/app/customers/export?format=${format}`, `customers.${format}`);
     } catch (err: any) {
       showAlert(err.message || 'Export failed');
+    }
+  };
+
+  // A payment entered by mistake: cancel it, and the customer's balance goes back
+  const undoPayment = async (e: any) => {
+    if (!statementCustomer) return;
+    const ok = await confirmDialog(`Undo the ${formatINR(e.credit)} payment from ${formatDate(e.date)}? It is removed from all totals and ${statementCustomer.name}'s balance goes back.`,
+      { title: 'Undo payment?', confirmText: 'Undo payment', danger: true });
+    if (!ok) return;
+    try {
+      await api.voidCustomerPayment(statementCustomer.id, e.payment_id);
+      setNotice('Payment undone');
+      await viewStatement(statementCustomer);
+      loadCustomers();
+    } catch (err: any) {
+      showAlert(err.message || 'Could not undo the payment');
     }
   };
 
@@ -205,7 +231,7 @@ export const CustomersPage: React.FC = () => {
               <th className="p-3.5">Contact Details</th>
               <th className="p-3.5">GSTIN</th>
               <th className="p-3.5 text-right">Credit Limit</th>
-              <th className="p-3.5 text-right">Outstanding Dues</th>
+              <th className="p-3.5 text-right">Balance</th>
               <th className="p-3.5 text-right">Statement</th>
             </tr>
           </thead>
@@ -228,9 +254,7 @@ export const CustomersPage: React.FC = () => {
                     {formatINR(c.credit_limit_paise)}
                   </td>
                   <td className="p-3.5 text-right font-mono font-bold">
-                    <span className={c.outstanding_balance_paise > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}>
-                      {formatINR(c.outstanding_balance_paise)}
-                    </span>
+                    <BalanceText paise={c.outstanding_balance_paise} />
                   </td>
                   <td className="p-3.5 text-right">
                     <button
@@ -240,8 +264,8 @@ export const CustomersPage: React.FC = () => {
                     >
                       <Eye className="w-3.5 h-3.5" />
                     </button>
-                    <button onClick={() => { setPayCustomer(c); setPayAmount(c.outstanding_balance_paise > 0 ? (c.outstanding_balance_paise / 100).toFixed(2) : ''); setPayMode('CASH'); setPayRef(''); }}
-                      className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-slate-800 text-slate-500 hover:text-emerald-600 transition" title="Receive Payment">
+                    <button onClick={() => { setPayCustomer(c); setPayAmount(c.outstanding_balance_paise !== 0 ? (Math.abs(c.outstanding_balance_paise) / 100).toFixed(2) : ''); setPayMode('CASH'); setPayRef(''); }}
+                      className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-slate-800 text-slate-500 hover:text-emerald-600 transition" title={c.outstanding_balance_paise < 0 ? 'Return advance' : 'Receive Payment'}>
                       <IndianRupee className="w-3.5 h-3.5" />
                     </button>
                     <button onClick={() => openEdit(c)} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 hover:text-indigo-600 transition" title="Edit Customer">
@@ -383,8 +407,16 @@ export const CustomersPage: React.FC = () => {
       {payCustomer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-3">
-            <h3 className="font-bold text-base text-slate-900 dark:text-white">Receive payment — {payCustomer.name}</h3>
-            <p className="text-xs text-slate-500">Outstanding {formatINR(payCustomer.outstanding_balance_paise)}. The oldest unpaid invoices are settled first; any extra is kept as advance.</p>
+            {payCustomer.outstanding_balance_paise < 0 ? (<>
+              <h3 className="font-bold text-base text-slate-900 dark:text-white">Return advance — {payCustomer.name}</h3>
+              <p className="text-xs text-slate-500">
+                You hold <b className="text-sky-600 dark:text-sky-400">{formatINR(-payCustomer.outstanding_balance_paise)}</b> of {payCustomer.name}'s money
+                (paid, but no bill uses it). Give it back and record how you paid it; the balance becomes ₹0.00.
+              </p>
+            </>) : (<>
+              <h3 className="font-bold text-base text-slate-900 dark:text-white">Receive payment — {payCustomer.name}</h3>
+              <p className="text-xs text-slate-500">Owes you {formatINR(payCustomer.outstanding_balance_paise)}. The oldest unpaid invoices are settled first; any extra is kept as advance.</p>
+            </>)}
             <input type="number" min="0" step="0.01" placeholder="Amount ₹" value={payAmount} onChange={(e) => setPayAmount(e.target.value)}
               className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs" />
             <Select value={payMode} onChange={(e) => setPayMode(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs">
@@ -394,7 +426,7 @@ export const CustomersPage: React.FC = () => {
               className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs" />
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setPayCustomer(null)} className="px-4 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-100 rounded-xl">Cancel</button>
-              <button onClick={receivePayment} disabled={!(parseFloat(payAmount) > 0)} className="px-5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl disabled:opacity-50">Record Payment</button>
+              <button onClick={receivePayment} disabled={!(parseFloat(payAmount) > 0)} className="px-5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl disabled:opacity-50">{payCustomer.outstanding_balance_paise < 0 ? 'Return advance' : 'Record Payment'}</button>
             </div>
           </div>
         </div>
@@ -410,7 +442,7 @@ export const CustomersPage: React.FC = () => {
                   Customer Ledger: {statementCustomer.name}
                 </h3>
                 <p className="text-xs text-slate-400">
-                  Phone: {statementCustomer.phone || 'N/A'} · Outstanding: {formatINR(statementCustomer.outstanding_balance_paise)}
+                  Phone: {statementCustomer.phone || 'N/A'} · Balance: <BalanceText paise={statementCustomer.outstanding_balance_paise} />
                 </p>
               </div>
               <button onClick={() => setStatementCustomer(null)} className="text-slate-400 hover:text-slate-600">
@@ -423,7 +455,7 @@ export const CustomersPage: React.FC = () => {
                 <div className="mb-4">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Ledger (debit = billed, credit = received)</h4>
                   <table className="w-full text-[11px]">
-                    <thead className="text-slate-400 text-left"><tr><th className="py-1">Date</th><th>Type</th><th>Ref</th><th className="text-right">Debit</th><th className="text-right">Credit</th><th className="text-right">Balance</th></tr></thead>
+                    <thead className="text-slate-400 text-left"><tr><th className="py-1">Date</th><th>Type</th><th>Ref</th><th className="text-right">Debit</th><th className="text-right">Credit</th><th className="text-right">Balance</th><th /></tr></thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {ledger.entries.map((e: any, i: number) => (
                         <tr key={i}>
@@ -431,9 +463,14 @@ export const CustomersPage: React.FC = () => {
                           <td className="text-right font-mono">{e.debit ? formatINR(e.debit) : ''}</td>
                           <td className="text-right font-mono">{e.credit ? formatINR(e.credit) : ''}</td>
                           <td className="text-right font-mono font-bold">{formatINR(e.balance)}</td>
+                          <td className="text-right pl-2">
+                            {e.payment_id && (
+                              <button onClick={() => undoPayment(e)} className="text-[10px] font-semibold text-rose-600 hover:underline">Undo</button>
+                            )}
+                          </td>
                         </tr>
                       ))}
-                      {ledger.entries.length === 0 && <tr><td colSpan={6} className="py-2 text-slate-400">No transactions yet.</td></tr>}
+                      {ledger.entries.length === 0 && <tr><td colSpan={7} className="py-2 text-slate-400">No transactions yet.</td></tr>}
                     </tbody>
                   </table>
                   <div className="text-right text-xs font-bold mt-1">Closing balance: {formatINR(ledger.closingBalancePaise)}</div>
@@ -468,3 +505,9 @@ export const CustomersPage: React.FC = () => {
     </div>
   );
 };
+
+/** A customer's balance in plain words: what they owe you, or the advance you hold for them. */
+const BalanceText: React.FC<{ paise: number }> = ({ paise }) =>
+  paise > 0 ? <span className="text-amber-600 dark:text-amber-400">{formatINR(paise)} due</span>
+  : paise < 0 ? <span className="text-sky-600 dark:text-sky-400">{formatINR(-paise)} advance</span>
+  : <span className="text-slate-400">{formatINR(0)}</span>;

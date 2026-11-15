@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
 import { db } from '../../db/connection.js';
+import { applyCustomerAdvance } from '../../services/invoiceService.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // --- Bulk Pricing Slabs ---
@@ -234,6 +235,8 @@ export function addPartyLedgerEntry(req: AuthenticatedRequest, res: Response): v
         UPDATE customers SET outstanding_balance_paise = ?, updated_at = datetime('now')
         WHERE id = ? AND business_id = ?
       `).run(newBalance, customerId, businessId);
+      // A credit entry (payment, discount) settles the customer's open bills
+      if (!isDebit) applyCustomerAdvance(businessId, customerId);
     })();
 
     res.status(201).json({

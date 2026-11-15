@@ -8,6 +8,10 @@ import {
 import { ThemeSwitch } from '../../components/ThemeSwitch.js';
 import { SessionNoticeBanner } from '../../components/system/SessionNoticeBanner.js';
 import type { SignupDraft } from './RegisterPage.js';
+import { ForgotPasswordDialog } from './ForgotPasswordDialog.js';
+import { CATEGORIES, STATE_NAMES } from './RegisterPage.js';
+import { Select } from '../../components/ui/Select.js';
+import { LoginShowcase } from '../../components/auth/LoginShowcase.js';
 
 interface LoginPageProps {
   onContinueSignup: (draft: SignupDraft) => void;
@@ -21,8 +25,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   setupRequired = false,
   initialMode = 'signin',
 }) => {
-  const { login, quickDemoLogin, isLoading } = useAuth();
+  const { login, quickDemoLogin, isLoading, intent, switchBusiness } = useAuth();
   const { system } = useLicense();
+  const businesses = system?.businesses || [];
+  const signInTo = intent?.shopId ? businesses.find((b) => b.id === intent.shopId)?.name : undefined;
+  // The same sign-in works for more than one business on this computer: which one to open
+  const [choices, setChoices] = useState<Array<{ id: string; name: string }> | null>(null);
+  // An account made on another computer, older than the details kept on the server: what this computer still needs
+  const [setup, setSetup] = useState<{ needs: string[]; businessName: string } | null>(null);
+  const [setupState, setSetupState] = useState('');
+  const [setupCategory, setSetupCategory] = useState('');
   const demoMode = !!system?.demoMode;
   const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
   const [ownerName, setOwnerName] = useState('');
@@ -30,6 +42,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [forgot, setForgot] = useState(false);
+  const [resetDone, setResetDone] = useState('');
   const [notice, setNotice] = useState<SessionNotice | null>(null);
   useEffect(() => { setNotice(takeSessionNotice()); }, []);
   useEffect(() => { setMode(initialMode); }, [initialMode]);
@@ -43,8 +57,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     e.preventDefault();
     clearSessionNotice();
     setError('');
+    setChoices(null);
+    if (setup && ((setup.needs.includes('state') && !setupState) || (setup.needs.includes('category') && !setupCategory))) {
+      setError('Choose the details below to finish setting up this computer.');
+      return;
+    }
     try {
-      await login({ email, password });
+      await login({ email, password, ...(setup ? { details: { state: setupState || undefined, category: setupCategory || undefined } } : {}) });
+    } catch (err: any) {
+      if (err.code === 'CHOOSE_BUSINESS' && Array.isArray(err.details?.businesses)) {
+        setChoices(err.details.businesses);
+        return;
+      }
+      if (err.code === 'ACCOUNT_DETAILS_NEEDED' && Array.isArray(err.details?.needs)) {
+        setSetup({ needs: err.details.needs, businessName: err.details.businessName || 'your business' });
+        return;
+      }
+      setError(err.message || 'Login failed. Please check credentials.');
+    }
+  };
+
+  const openChosen = async (shopId: string) => {
+    setError('');
+    try {
+      await login({ email, password, shopId });
     } catch (err: any) {
       setError(err.message || 'Login failed. Please check credentials.');
     }
@@ -82,9 +118,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   return (
     <div className="relative min-h-screen w-full max-w-full overflow-x-hidden overscroll-none touch-pan-y bg-slate-100 text-slate-900 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-950 dark:to-emerald-950 dark:text-white flex items-center justify-center p-4">
       <div className="absolute top-4 right-4 z-20"><ThemeSwitch /></div>
-      <div className="max-w-4xl w-full grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
+      <div className="max-w-6xl w-full grid grid-cols-1 md:grid-cols-[1.15fr_1fr] gap-10 lg:gap-16 items-center">
 
-        <div className="space-y-6">
+        <div className="space-y-6 min-w-0">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/30">
               <Zap className="w-7 h-7 text-white fill-white" />
@@ -93,15 +129,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <h1 className="text-3xl font-extrabold tracking-tight font-['Outfit']">
                 Apna Billing
               </h1>
-              <p className="text-xs text-emerald-400 font-semibold tracking-wide uppercase">
+              <p className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold tracking-wide uppercase">
                 All-in-One Multi-Category Billing Platform
               </p>
             </div>
           </div>
 
-          <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">
-            Fast POS billing, atomic GST invoices, real-time inventory ledger, and industry-tailored workflows for Indian businesses.
-          </p>
+          <LoginShowcase />
 
           {demoMode && <div className="space-y-3 pt-2">
             <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
@@ -171,18 +205,31 @@ export const LoginPage: React.FC<LoginPageProps> = ({
         <div className="bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 p-8 rounded-2xl shadow-2xl">
           <div className="mb-5">
             <h2 className="text-xl font-bold font-['Outfit']">
-              {mode === 'signup' ? 'Create your account' : 'Sign in to your business'}
+              {mode === 'signup'
+                ? businesses.length ? 'Add a new business' : 'Create your account'
+                : signInTo && intent?.mode === 'signin' ? `Sign in to ${signInTo}` : 'Sign in to your business'}
             </h2>
             <p className="text-xs text-slate-400 mt-1">
               {mode === 'signup'
-                ? 'Enter basic details first. Next you will choose your business category.'
-                : setupRequired
+                ? businesses.length
+                  ? 'It gets its own data, bills and licence, separate from the businesses already on this computer. Use a different email for it.'
+                  : 'Enter basic details first. Next you will choose your business category.'
+                : businesses.length > 1
+                  ? 'Sign in with the email of the business you want to open.'
+                  : setupRequired
                   ? 'Already set up this shop? Sign in below, or switch to Sign Up.'
                   : demoMode
                     ? 'Enter your credentials or click any demo profile'
                     : 'Enter the owner or staff credentials for this computer'}
             </p>
           </div>
+
+          {mode === 'signup' && intent?.mode === 'signup' && intent.shopId && signInTo && (
+            <button type="button" onClick={() => switchBusiness(intent.shopId!)}
+              className="mb-4 -mt-1 text-xs font-semibold text-emerald-600 hover:underline dark:text-emerald-400">
+              ← Back to {signInTo}
+            </button>
+          )}
 
           {/* Sign In / Sign Up toggle */}
           <div className="mb-5 p-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 grid grid-cols-2 gap-1">
@@ -218,6 +265,67 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
           )}
 
+          {resetDone && mode === 'signin' && (
+            <div className="mb-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950/50 dark:border-emerald-800 dark:text-emerald-200 text-xs rounded-xl">
+              {resetDone}
+            </div>
+          )}
+          {forgot && (
+            <ForgotPasswordDialog
+              initialEmail={email}
+              onClose={() => setForgot(false)}
+              onDone={(e) => { setForgot(false); setEmail(e); setPassword(''); setResetDone('Your password has been changed. Sign in with the new password.'); }}
+            />
+          )}
+
+          {mode === 'signin' && businesses.length > 1 && !choices && (
+            <div className="mb-4 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+              <span>On this computer:</span>
+              {businesses.map((b) => (
+                <span key={b.id} className={`rounded-full border px-2 py-0.5 font-semibold ${b.id === intent?.shopId
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                  : 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'}`}>{b.name}</span>
+              ))}
+            </div>
+          )}
+          {mode === 'signin' && choices && (
+            <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+              <p className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-200">This sign-in opens more than one business. Which one?</p>
+              <div className="space-y-1.5">
+                {choices.map((c) => (
+                  <button key={c.id} type="button" disabled={isLoading} onClick={() => void openChosen(c.id)}
+                    className="w-full flex items-center justify-between gap-2 rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-left text-xs font-semibold text-slate-800 dark:text-slate-100 hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition">
+                    <span className="truncate">{c.name}</span>
+                    <ArrowRight className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === 'signin' && setup && (
+            <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3 dark:border-emerald-800 dark:bg-emerald-950/30">
+              <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">Setting up {setup.businessName} on this computer</p>
+              <p className="mt-0.5 mb-2 text-[11px] text-slate-500 dark:text-slate-400">Your account was found. Choose these once, then press Sign In again.</p>
+              <div className="space-y-2">
+                {setup.needs.includes('category') && (
+                  <Select value={setupCategory} onChange={(e) => setSetupCategory(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 dark:bg-slate-800/80 dark:border-slate-700 dark:text-white">
+                    <option value="">Type of business…</option>
+                    {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                  </Select>
+                )}
+                {setup.needs.includes('state') && (
+                  <Select value={setupState} onChange={(e) => setSetupState(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-900 dark:bg-slate-800/80 dark:border-slate-700 dark:text-white">
+                    <option value="">State of the business (for GST)…</option>
+                    {STATE_NAMES.map((n) => <option key={n} value={n}>{n}</option>)}
+                  </Select>
+                )}
+              </div>
+            </div>
+          )}
+
           {mode === 'signin' ? (
             <form onSubmit={handleSignIn} className="space-y-4">
               <div>
@@ -236,7 +344,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">Password</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300">Password</label>
+                  <button type="button" onClick={() => { setError(''); setForgot(true); }}
+                    className="text-[11px] font-semibold text-emerald-600 hover:underline dark:text-emerald-400">Forgot password?</button>
+                </div>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                   <input

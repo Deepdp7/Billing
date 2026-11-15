@@ -9,6 +9,7 @@ import { OnlineOrder, OnlineOrderStatus, OnlineStoreConfig } from '../../types/i
 import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export function OnlineOrdersPage() {
   const [orders, setOrders] = useState<OnlineOrder[]>([]);
   const [storeConfig, setStoreConfig] = useState<OnlineStoreConfig | null>(null);
@@ -51,8 +52,10 @@ export function OnlineOrdersPage() {
     loadData();
   }, [statusFilter]);
 
-  const loadData = async () => {
-    setIsLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadData(true); });
+  const loadData = async (quiet?: unknown) => {
+    if (quiet !== true) setIsLoading(true);
     try {
       const [configRes, ordersRes] = await Promise.all([
         api.getStoreConfig(),

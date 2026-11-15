@@ -26,5 +26,5 @@ export interface NativeLicenseCore {
  * from source (development, tests) there is no native core and the TypeScript implementation is used instead.
  */
 export function nativeLicenseCore(): NativeLicenseCore | null {
-  return loadNativeModule<NativeLicenseCore>('apna_core.node');
+  return loadNativeModule<NativeLicenseCore>('apna-core.dll');
 }

@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const QuotationsPage: React.FC<{ onNavigateToInvoices: () => void }> = ({ onNavigateToInvoices }) => {
   const [quotes, setQuotes] = useState<any[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -22,7 +23,9 @@ export const QuotationsPage: React.FC<{ onNavigateToInvoices: () => void }> = ({
     loadQuotations();
   }, []);
 
-  const loadQuotations = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadQuotations(true); });
+  const loadQuotations = async (quiet?: unknown) => {
     try {
       const [qRes, pRes] = await Promise.all([
         api.getQuotations(),

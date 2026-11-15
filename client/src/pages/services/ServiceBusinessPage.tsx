@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const ServiceBusinessPage: React.FC = () => {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<'appointments' | 'jobCards' | 'recurring' | 'hardware'>('appointments');
@@ -62,8 +63,10 @@ export const ServiceBusinessPage: React.FC = () => {
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void fetchData(true); });
+  const fetchData = async (quiet?: unknown) => {
+    if (quiet !== true) setIsLoading(true);
     try {
       const [aptRes, jobRes, recRes, hwRes, custRes, sumRes] = await Promise.all([
         api.getAppointments(),

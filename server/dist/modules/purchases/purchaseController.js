@@ -25,6 +25,7 @@ const http_js_1 = require("../../lib/http.js");
 const dates_js_1 = require("../../lib/dates.js");
 const invoiceService_js_1 = require("../../services/invoiceService.js");
 const auditService_js_1 = require("../../services/auditService.js");
+const syncEngine_js_1 = require("../../sync/syncEngine.js");
 const text = (max) => zod_1.z.string().trim().max(max).optional().nullable();
 const supplierSchema = zod_1.z.object({
     name: zod_1.z.string().trim().min(1, 'Supplier name is required').max(150),
@@ -155,11 +156,13 @@ function getSupplierLedger(req, res) {
     SELECT invoice_date AS date, created_at, 'PURCHASE' AS type, purchase_number AS reference, 0 AS debit, total_paise AS credit, 'Purchase bill' AS description
       FROM purchase_invoices WHERE supplier_id = ? AND business_id = ?
     UNION ALL
-    SELECT payment_date, created_at, 'PAYMENT', reference_number, amount_paise, 0, payment_mode || COALESCE(' — ' || notes, '')
-      FROM payments WHERE supplier_id = ? AND business_id = ? AND direction = 'OUT' AND status = 'ACTIVE'
+    SELECT payment_date, created_at, CASE direction WHEN 'OUT' THEN 'PAYMENT' ELSE 'REFUND_RECEIVED' END, reference_number,
+           CASE direction WHEN 'OUT' THEN amount_paise ELSE 0 END, CASE direction WHEN 'IN' THEN amount_paise ELSE 0 END,
+           payment_mode || COALESCE(' — ' || notes, '')
+      FROM payments WHERE supplier_id = ? AND business_id = ? AND status = 'ACTIVE'
     UNION ALL
     SELECT return_date, created_at, 'DEBIT_NOTE', debit_note_number, total_paise, 0, 'Purchase return (' || refund_mode || ')'
-      FROM debit_notes WHERE supplier_id = ? AND business_id = ? AND refund_mode = 'ADJUST_PAYABLE'
+      FROM debit_notes WHERE supplier_id = ? AND business_id = ?
     ORDER BY 1 ASC, 2 ASC`).all(sup.id, req.businessId, sup.id, req.businessId, sup.id, req.businessId);
     let running = 0;
     // Positive balance = amount we owe the supplier.
@@ -327,11 +330,12 @@ function createPurchaseOrder(req, res) {
     connection_js_1.db.transaction(() => {
         const count = connection_js_1.db.prepare('SELECT COUNT(*) AS c FROM purchase_orders WHERE business_id = ?').get(req.businessId).c;
         let n = count + 1;
-        while (connection_js_1.db.prepare('SELECT 1 FROM purchase_orders WHERE business_id = ? AND po_number = ?').get(req.businessId, `PO-${1000 + n}`))
+        const po = `PO-${(0, syncEngine_js_1.seriesTag)()}`;
+        while (connection_js_1.db.prepare('SELECT 1 FROM purchase_orders WHERE business_id = ? AND po_number = ?').get(req.businessId, `${po}${1000 + n}`))
             n++;
         connection_js_1.db.prepare(`INSERT INTO purchase_orders (id, business_id, po_number, supplier_id, supplier_name, expected_date, subtotal_paise, tax_paise, total_paise, notes, created_by)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-            .run(id, req.businessId, `PO-${1000 + n}`, input.supplierId || null, input.supplierName, input.expectedDate || null, subtotal, tax, total, input.notes || '', req.user?.userId || null);
+            .run(id, req.businessId, `${po}${1000 + n}`, input.supplierId || null, input.supplierName, input.expectedDate || null, subtotal, tax, total, input.notes || '', req.user?.userId || null);
         const ins = connection_js_1.db.prepare(`INSERT INTO purchase_order_items (id, business_id, purchase_order_id, product_id, product_name, quantity, unit_price_paise, tax_rate, tax_paise, total_paise)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         for (const it of items)

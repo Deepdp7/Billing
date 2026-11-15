@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { AuthenticatedRequest } from '../middleware/auth.js';
 import { computeStatus, recordUsage } from './licenseClient.js';
 import { featuresForRequest } from './features.js';
+import { bindToShop } from '../db/shops.js';
 
 const USAGE_GET = /\/(export|stats)$|^\/reports\/|^\/accounting\/|^\/inventory\/valuation/;
 
@@ -34,10 +35,10 @@ export function licenseGuard(req: AuthenticatedRequest, res: Response, next: Nex
     }
   }
 
-  if (required.length > 0 && (!isRead || USAGE_GET.test(req.path))) {
-    res.on('finish', () => {
+  if (required.length > 0 && (!isRead || USAGE_GET.test(req.path)) && req.headers['x-apna-background'] !== '1') {
+    res.on('finish', bindToShop(() => {
       if (res.statusCode < 400) for (const f of required) recordUsage(f);
-    });
+    }));
   }
   next();
 }

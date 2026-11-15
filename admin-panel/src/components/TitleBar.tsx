@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { desktop, isDesktopApp } from '../lib/desktop';
+import { maximizeButton, titleBarMouseDown, useWindowState } from '../lib/windowState';
 
 /** Indigo window chrome for the license console. Hidden in a normal browser. */
 export function DesktopFrame({ children }: { children: React.ReactNode }) {
@@ -17,18 +18,10 @@ function run(action: () => Promise<unknown>) {
 }
 
 function AdminTitleBar() {
-  const [maximized, setMaximized] = useState(false);
-  useEffect(() => {
-    let stop = () => {};
-    desktop.isMaximized().then(setMaximized).catch(() => undefined);
-    desktop.onResized(() => { desktop.isMaximized().then(setMaximized).catch(() => undefined); })
-      .then((unlisten) => { stop = unlisten; })
-      .catch(() => undefined);
-    return () => stop();
-  }, []);
+  const { maximized, fullscreen } = useWindowState();
 
   return (
-    <header className="h-14 shrink-0 flex items-center select-none text-slate-100 bg-slate-900 border-b border-slate-800">
+    <header onMouseDownCapture={titleBarMouseDown(fullscreen)} className="h-14 shrink-0 flex items-center select-none text-slate-100 bg-slate-900 border-b border-slate-800">
       <div data-tauri-drag-region className="flex items-center gap-2.5 pl-3.5">
         <span data-tauri-drag-region className="w-5 h-5 rounded-md bg-indigo-500 grid place-items-center text-[10px] text-white">◆</span>
         <span data-tauri-drag-region className="text-[13px] font-semibold tracking-tight font-['Outfit']">Apna Admin</span>
@@ -40,9 +33,11 @@ function AdminTitleBar() {
           className="grid h-10 w-10 place-items-center rounded-md text-slate-200 hover:bg-white/10">
           <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden><path d="M5 12h14" /></svg>
         </button>
-        <button type="button" aria-label={maximized ? 'Restore' : 'Maximize'} onClick={() => run(async () => { await desktop.toggleMaximize(); setMaximized(await desktop.isMaximized()); })}
+        <button type="button" aria-label={fullscreen ? 'Exit full screen' : maximized ? 'Restore' : 'Maximize'} onClick={() => run(() => maximizeButton(fullscreen))}
           className="grid h-10 w-10 place-items-center rounded-md text-slate-200 hover:bg-white/10">
-          {maximized
+          {fullscreen
+            ? <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5" /></svg>
+            : maximized
             ? <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M8 8h10v10H8z" /><path d="M6 16V6h10" /></svg>
             : <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="6" y="6" width="12" height="12" rx="1.2" /></svg>}
         </button>

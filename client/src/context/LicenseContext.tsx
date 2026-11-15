@@ -10,6 +10,8 @@ export interface SystemInfo {
   singleTenant: boolean;
   setupRequired: boolean;
   licenseEnforced: boolean;
+  /** The businesses set up on this computer */
+  businesses?: Array<{ id: string; name: string; category: string | null }>;
 }
 
 export interface LicenseStatus {
@@ -41,6 +43,11 @@ export interface LicenseStatus {
   connectivity?: { online: boolean; since: string; serverReachable: boolean };
   requireOnline?: boolean;
 }
+
+/** The version clients see: 1.0.1+2 (update 2 of 1.0.1) shows as 1.0.1 */
+export const shownVersion = (v?: string | null) => (v || '').split('+')[0];
+/** 1.0.1+2 → "1.0.1 (update 2)", for places that compare two versions */
+export const versionLabel = (v?: string | null) => (v?.includes('+') ? `${shownVersion(v)} (update ${v.split('+')[1]})` : v || '');
 
 interface Ctx {
   system: SystemInfo | null;
@@ -131,6 +138,16 @@ function endLocalSession(reason?: string, erased?: boolean, backupFile?: string)
         title: 'This computer was deactivated',
         body: 'Your administrator deactivated this installation. You have been signed out, and the saved login on this computer was cleared.',
       }
+    : reason === 'SYNC_JOINED'
+      ? {
+          title: 'Your account\'s data is now on this computer',
+          body: 'This computer now shares everything with your other computers on the same account: products, bills, customers, stock and staff. Sign in again to continue. A backup of what was on this computer before was saved first.',
+        }
+    : reason === 'INSTALLATION_DELETED'
+      ? {
+          title: 'This computer was removed from the licence',
+          body: 'Your administrator removed this computer from your licence and you have been signed out. Your data is still on this computer; sign in again (or enter a licence key) when access is restored.',
+        }
     : reason === 'CUSTOMER_DELETED' && erased === false
       ? {
           title: 'Shop removed by administrator',
@@ -185,6 +202,28 @@ export const LicenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [lockedByAdmin, setLockedByAdmin] = useState<string[]>([]);
 
   const previous = useRef<LicenseStatus | null>(null);
+  // The business this window is signed in to (AuthContext): its licence is the one shown, and its live updates heard
+  const [shop, setShop] = useState(() => { try { return localStorage.getItem('apna_billing_shop') || ''; } catch { return ''; } });
+  // A sign-in to the same business again: its licence is read again (signing in can have connected it to the licence)
+  const [signedIn, setSignedIn] = useState(0);
+  useEffect(() => {
+    const onShop = (e: Event) => {
+      const next = String((e as CustomEvent).detail || '');
+      // No screen of the old licence state in between
+      setLoading(true);
+      setShop((current) => {
+        if (current !== next) {
+          previous.current = null;
+          setLockedByAdmin([]);
+        } else {
+          setSignedIn((n) => n + 1);
+        }
+        return next;
+      });
+    };
+    window.addEventListener('apna:shop-changed', onShop);
+    return () => window.removeEventListener('apna:shop-changed', onShop);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -214,6 +253,8 @@ export const LicenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, []);
 
+  useEffect(() => { if (signedIn) void refresh(); }, [signedIn, refresh]);
+
   useEffect(() => {
     refresh();
     // Fallback: status is cheap (local verification); re-read periodically so time-based expiry shows up.
@@ -224,7 +265,16 @@ export const LicenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     let es: EventSource | null = null;
     let debounce: number | undefined;
     try {
-      es = new EventSource('/api/v1/license/events');
+      es = new EventSource(`/api/v1/license/events${shop ? `?shop=${encodeURIComponent(shop)}` : ''}`);
+      // Changes from the account's other computers (the screens reload quietly) and how sync is doing
+      es.addEventListener('data', (ev) => {
+        let tables: string[] = [];
+        try { tables = JSON.parse((ev as MessageEvent).data || '{}').tables || []; } catch { tables = []; }
+        window.dispatchEvent(new CustomEvent('apna:data-changed', { detail: { tables } }));
+      });
+      es.addEventListener('sync', (ev) => {
+        try { window.dispatchEvent(new CustomEvent('apna:sync-status', { detail: JSON.parse((ev as MessageEvent).data || '{}') })); } catch { /* ignore */ }
+      });
       es.addEventListener('license', (ev) => {
         let payload: { sessionEnded?: boolean; reason?: string; erased?: boolean; backupFile?: string } = {};
         try { payload = JSON.parse((ev as MessageEvent).data || '{}'); } catch { payload = {}; }
@@ -244,7 +294,7 @@ export const LicenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       window.clearTimeout(debounce);
       es?.close();
     };
-  }, [refresh]);
+  }, [refresh, shop]);
 
   const hasFeature = useCallback((key?: string) => {
     if (!key || !license || !license.enforced) return true;

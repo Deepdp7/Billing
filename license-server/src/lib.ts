@@ -116,6 +116,11 @@ const EVENT_TITLES: Record<string, string> = {
   INSTALLATION_DEACTIVATED: 'Computer deactivated',
   FEATURE_OVERRIDE_SET: 'Feature changed',
   FEATURE_OVERRIDE_REMOVED: 'Feature change removed',
+  PASSWORD_RESET_REQUESTED: 'Password reset code sent',
+  PASSWORD_RESET: 'Password reset by email code',
+  SIGNED_IN_NEW_DEVICE: 'Account opened on another computer',
+  APP_UNINSTALLED: 'Apna Billing uninstalled',
+  INSTALLATION_DELETED: 'Device deleted',
 };
 
 function eventTitle(type: string): string {
@@ -129,6 +134,11 @@ function eventMessage(e: { type: string; actor: string; details?: Record<string,
   if (e.type === 'ACTIVATED') return `${text(d.deviceName) || 'A computer'} activated a license.`;
   if (e.type === 'DEACTIVATED' || e.type === 'INSTALLATION_DEACTIVATED') return 'That computer can no longer use this license.';
   if (e.type === 'APP_UPDATED') return `Updated from ${text(d.from) || 'an older version'} to ${text(d.to) || 'a newer version'}.`;
+  if (e.type === 'PASSWORD_RESET_REQUESTED') return `A reset code was emailed to ${text(d.email) || 'the shop'}.`;
+  if (e.type === 'APP_UNINSTALLED') return `Apna Billing was uninstalled from ${text(d.deviceName) || 'a computer'}. You can delete it from the device list.`;
+  if (e.type === 'INSTALLATION_DELETED') return `${text(d.deviceName) || 'A device'} was removed from the device list.`;
+  if (e.type === 'SIGNED_IN_NEW_DEVICE') return `${text(d.email) || 'The account'} was opened on ${text(d.deviceName) || 'another computer'}.`;
+  if (e.type === 'PASSWORD_RESET') return `${text(d.email) || 'A shop'} set a new password with an email code.`;
   if (e.actor === 'client') return 'A customer installation just reported this.';
   return 'Applied from the admin console.';
 }

@@ -243,6 +243,133 @@ const migrations: Record<string, { up: (k: Knex) => Promise<void>; down: (k: Kne
       await k.schema.dropTableIfExists('app_releases');
     },
   },
+  '003_app_accounts': {
+    // The shop's billing-app sign-in (email, encrypted password) and the email codes for "Forgot password"
+    async up(k) {
+      await k.schema.alterTable('customers', (t) => {
+        t.string('app_email', 150);
+        t.text('app_password_enc');
+        ts(t, 'app_password_at');
+        t.string('app_password_by', 20); // SIGNUP, LOGIN, SHOP, RESET, ADMIN
+        t.integer('app_account_rev').notNullable().defaultTo(0); // raised by every change the computers must take over
+      });
+      await k.schema.alterTable('installations', (t) => {
+        t.integer('account_rev').notNullable().defaultTo(0); // the change this computer has taken over
+      });
+      await k.schema.createTable('password_resets', (t) => {
+        t.string('id', 36).primary();
+        t.string('email', 150).notNullable().index();
+        t.string('customer_id', 36).notNullable();
+        t.string('code_hash', 64).notNullable();
+        t.integer('attempts').notNullable().defaultTo(0);
+        ts(t, 'expires_at').notNullable();
+        ts(t, 'used_at');
+        ts(t, 'created_at').notNullable();
+      });
+    },
+    async down(k) {
+      await k.schema.dropTableIfExists('password_resets');
+      await k.schema.alterTable('installations', (t) => t.dropColumn('account_rev'));
+      await k.schema.alterTable('customers', (t) => {
+        for (const c of ['app_email', 'app_password_enc', 'app_password_at', 'app_password_by', 'app_account_rev']) t.dropColumn(c);
+      });
+    },
+  },
+  '004_machine': {
+    // Several businesses on one computer are separate installations (each its own licence); this says which
+    // computer they are on (sha256 of its hardware hint), for "one free trial per computer"
+    async up(k) {
+      await k.schema.alterTable('installations', (t) => {
+        t.string('machine_hash', 64).index();
+      });
+    },
+    async down(k) {
+      await k.schema.alterTable('installations', (t) => t.dropColumn('machine_hash'));
+    },
+  },
+  '005_customer_profile': {
+    // The business details the billing app needs to set up the same account on another computer (category, state…)
+    async up(k) {
+      await k.schema.alterTable('customers', (t) => {
+        t.text('profile_json');
+      });
+    },
+    async down(k) {
+      await k.schema.alterTable('customers', (t) => t.dropColumn('profile_json'));
+    },
+  },
+  '006_device_removal': {
+    // A device uninstalled by the shop (it said so on its way out), and devices the vendor deleted: a deleted
+    // device that connects later is told it was removed (it signs out and keeps its data)
+    async up(k) {
+      await k.schema.alterTable('installations', (t) => {
+        ts(t, 'uninstalled_at');
+      });
+      await k.schema.createTable('removed_installations', (t) => {
+        t.string('id', 36).primary();
+        t.string('reason', 40).notNullable();
+        ts(t, 'removed_at').notNullable();
+      });
+    },
+    async down(k) {
+      await k.schema.dropTableIfExists('removed_installations');
+      await k.schema.alterTable('installations', (t) => t.dropColumn('uninstalled_at'));
+    },
+  },
+  '007_sync': {
+    // Everything a shop's account does, shared by all its computers: the latest copy of each row (sealed), the
+    // stock / balance changes made on each computer (applied as changes, so two counters selling at once both count),
+    // and each computer's place in the account (its number, and which one keeps the plain bill numbers)
+    async up(k) {
+      await k.schema.createTable('sync_workspaces', (t) => {
+        t.string('customer_id', 36).primary();
+        t.string('business_id', 64);
+        t.integer('epoch').notNullable().defaultTo(1);
+        t.bigInteger('last_seq').notNullable().defaultTo(0);
+        t.integer('next_device_no').notNullable().defaultTo(1);
+        t.string('primary_installation', 36);
+        t.integer('primary_invoices').notNullable().defaultTo(0);
+        ts(t, 'created_at').notNullable();
+        ts(t, 'updated_at').notNullable();
+      });
+      await k.schema.createTable('sync_devices', (t) => {
+        t.string('installation_id', 36).primary();
+        t.string('customer_id', 36).notNullable().index();
+        t.integer('device_no').notNullable();
+        t.bigInteger('cursor').notNullable().defaultTo(0); // how far this computer has fetched (older changes can go)
+        ts(t, 'joined_at').notNullable();
+        ts(t, 'last_push_at');
+        ts(t, 'last_pull_at');
+      });
+      await k.schema.createTable('sync_rows', (t) => {
+        t.string('customer_id', 36).notNullable();
+        t.string('tbl', 64).notNullable();
+        t.string('pk', 500).notNullable();
+        t.text('data');
+        t.boolean('deleted').notNullable().defaultTo(false);
+        t.bigInteger('seq').notNullable();
+        t.string('origin', 36);
+        ts(t, 'updated_at').notNullable();
+        t.primary(['customer_id', 'tbl', 'pk']);
+        t.index(['customer_id', 'seq']);
+      });
+      await k.schema.createTable('sync_deltas', (t) => {
+        t.string('id', 64).primary();
+        t.string('customer_id', 36).notNullable();
+        t.string('tbl', 64).notNullable();
+        t.string('pk', 500).notNullable();
+        t.string('col', 64).notNullable();
+        t.double('delta').notNullable();
+        t.bigInteger('seq').notNullable();
+        t.string('origin', 36);
+        ts(t, 'created_at').notNullable();
+        t.index(['customer_id', 'seq']);
+      });
+    },
+    async down(k) {
+      for (const t of ['sync_deltas', 'sync_rows', 'sync_devices', 'sync_workspaces']) await k.schema.dropTableIfExists(t);
+    },
+  },
 };
 
 export const migrationSource = {

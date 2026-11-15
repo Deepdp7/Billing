@@ -7,14 +7,17 @@ import {
   MinusCircle, History, CheckCircle, X, Search 
 } from 'lucide-react';
 import { showAlert } from '../../components/ui/dialogs.js';
+import { scanBeep, useScanner } from '../../lib/scanner.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const InventoryPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
   const [movements, setMovements] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'levels' | 'movements'>('levels');
   const [search, setSearch] = useState('');
+  useScanner((code) => { scanBeep(true); setSearch(code); return true; });
   
   // Adjustment Modal
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
@@ -29,7 +32,9 @@ export const InventoryPage: React.FC = () => {
     loadInventory();
   }, []);
 
-  const loadInventory = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadInventory(true); });
+  const loadInventory = async (quiet?: unknown) => {
     try {
       const [prodRes, alertRes, movRes] = await Promise.all([
         api.getProducts({ limit: 200 }),

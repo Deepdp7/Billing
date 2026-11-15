@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-release-open"
+description = "Enables the release_open command without any pre-configured scope."
+commands.allow = ["release_open"]
+
+[[permission]]
+identifier = "deny-release-open"
+description = "Denies the release_open command without any pre-configured scope."
+commands.deny = ["release_open"]

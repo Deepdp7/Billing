@@ -64,3 +64,383 @@ See `docs/DESKTOP_ARCHITECTURE.md`.
 - NSIS hooks (`tauri/src-tauri/installer-hooks.nsh`) stop the engine and remove the 1.1.x `app/` folder.
 - New key to back up: `%USERPROFILE%\.apna-billing\data.key` (fingerprint in `deploy/data-key.fingerprint`).
 - Tests: server 71 (incl. `encryption.test.ts`), `npm run test:native` (Rust) 6.
+
+## 2026-11-03 — Branding, admin app on the VPS, Installer Studio installers
+- `branding/` + `scripts/build-branding.py`: icons, installer sidebar/header, logos for client (emerald) and admin (indigo).
+- Admin desktop app built with the VPS URL opens the real Admin Panel through a local relay that trusts only the
+  server certificate (`admin-tauri/src-tauri/src/lib.rs`); `npm run build:admin-app`.
+- Both setups are made by Installer Studio from `deploy/installer-studio/*.isproj` (never change their appId).
+  Installer Studio gained `/P` (passive), `/R` (restart) and "Replaces an installation made by another installer",
+  used to take over 1.1.x/1.2.0 Tauri installs. Tested on this PC: 1.1.4 → 1.2.0 via `/P /UPDATE /R`.
+
+## 2026-11-03 (2) — real branding art, sharper installer, native modules as .dll
+- Branding regenerated from the photos in `branding/source/` (app/admin icons + installer sidebar art).
+- Installer pictures made sharp: Installer Studio now renders the welcome sidebar at the native 164×314 and the
+  header at 150×57 (NSIS was downscaling the old 2× bitmaps with a poor filter → blur at 100% DPI). deploy +
+  `.isproj` point at the 164×314 / 150×57 BMPs.
+- The two compiled modules ship as `apna-core.dll` and `apna-storage.dll` (were `apna_core.node` /
+  `better_sqlite3.node`); the engine loads them by path with `process.dlopen` (`server/src/lib/native.ts`). No
+  `.node` files or node_modules are installed. Verified end-to-end on this PC (install → run → uninstall).
+
+## 2026-11-03 (3) — installed files protected from deletion (client)
+- New Installer Studio option "Protect installed files" (`protect_files` in the project, toggle in the window):
+  the installer denies the Windows Users group Delete/Delete-child over the install folder with icacls, so the
+  program cannot be deleted from Explorer/Recycle Bin/`del`. The uninstaller lifts the lock first (un.onInit), so
+  proper removal still works; re-applied across updates; Administrators/SYSTEM keep full control
+  (recovery: `icacls "<folder>" /reset /T /C`). Enabled for the client (`Apna Billing.isproj`), off for the admin app.
+- Verified on this PC: delete of exe/dll/engine/whole-folder all blocked; app runs; in-app update (/P /UPDATE /R)
+  replaces files and re-locks; uninstall removes everything. Installer Studio tests + ignored `protects_installed_files`.
+
+## 2026-11-03 (4) — installer pictures sharp at every display scaling
+- The 1× pictures were stretched blockily by Windows on PCs at 125 %/150 %/… scaling (the setup is DPI-aware, so
+  its picture controls grow). Installer Studio now embeds the sidebar and header at 100–300 % and, on the welcome /
+  finish pages and the header (installer and uninstaller), draws the size that fits the control with halftone
+  scaling (exact copy when the size matches).
+- `build-branding.py` makes 3× masters (`sidebar-492x942.bmp`, `header-450x171.bmp`) that the deploy script and both
+  `.isproj` use; `installer-icon.ico` gained 20 / 40 / 96 px.
+- `python deploy/apna_vps.py reset-updates`: shows the update state on the VPS, then (after typing RESET) backs up
+  the database and forgets every release, so the client numbering can restart lower (e.g. 1.0.0). Licences untouched.
+
+## 2026-11-03 (5) — instant start, no white flash; Control Panel
+- Both desktop apps open their window at once on a built-in start screen (`tauri/ui`, `admin-tauri/ui`) painted in the
+  app's background colour (WebView background set too), start the engine / relay meanwhile and then navigate to it.
+  Measured on this PC (150%, warm): window 0.3 s, app 0.95 s, no white frame (was: nothing for 0.6 s, then white).
+- Same start screen in `client/index.html`, `admin-panel/index.html` and the apps' first loaders, so start-up looks
+  like one screen. Fonts are bundled (@fontsource) instead of render-blocking Google Fonts.
+- Admin app relay prefers port 47831 so the panel's files stay in the window's cache between runs; the license server
+  serves `/assets` as immutable (needs `npm run deploy:server`).
+- `apna_vps.py` gained `build --files-only`, `sign`, `admin-app [version] [--files-only]` and `APNA_ADMIN_TOKEN`;
+  pictures chosen in Installer Studio are kept. Installer Studio opens a project given on its command line.
+
+## 2026-11-03 (6) — Build & Release inside the Admin app
+- Admin Panel → **Build & Release** (OWNER, Admin app only): build the client / Admin app installers (directly or via
+  Installer Studio's window), sign, publish an update, upload the server, reset update history; live output on the
+  page. Runs fixed actions of `deploy/apna_vps.py` through `admin-tauri/src-tauri/src/release.rs` (commands
+  `release_*`, permissions in capabilities/default.json); publishing reuses the panel sign-in. Replaces the separate
+  Python Control Panel (removed).
+
+## 2026-11-03 (7) — one Updates & Releases page, faster start, motion
+- Admin Panel: App Updates and Build & Release are one page, **Updates & Releases** (build → output → publish → clients /
+  history; Admin app and server below; building only in the Admin app). The Admin app hands the built installer to the
+  page (`release_file`), which publishes it through the normal upload (history, signature check, password).
+- Admin Panel menu: a licence/customer/installation opened from a list keeps that list lit (was: always Paid Licenses).
+- Client start (warm, this PC): app on screen 0.95 s → 0.72 s. The engine starts before the window is created; exceljs
+  loads on the first Excel export (server start-up 350–500 ms → ~185 ms); 29 screens load on demand and are preloaded
+  right after start (start-up JS 950 KB → 346 KB).
+- Licence server: SQLite `synchronous=NORMAL` + `busy_timeout`, gzip responses (not event streams or installers).
+- Both apps: shared motion (screens settle in, pop-ups rise, buttons press, keyboard focus ring), off with Windows'
+  reduce-animations setting.
+
+
+## 2026-11-04 — update numbers (same version, new update)
+- `1.0.1+N` builds: clients get them as updates but still see 1.0.1 (app, sidebar, installer, Windows' installed-apps
+  list); only the update pop-up / licence page say "1.0.1 (update N)". Order 1.0.1 < 1.0.1+1 < 1.0.1+2 < 1.0.2.
+- Client shell: `APNA_BUILD` (from `tauri/update-number.txt`, written by `apna_vps.py`) is appended to the version the
+  updater and engine report. Licence server compares the update number (`versionLt`) and accepts it everywhere.
+- Admin app → Updates & Releases: **Update 1.0.1 again (1.0.1+N)** button; installer file names with `+N` are found,
+  uploaded and published. Admin app must be rebuilt (Rust changed); apps built before this need one normal update first.
+
+## 2026-11-04 (2) — A4 bill redesign, sticker labels
+- A4 bill (`client/src/components/billing/A4Invoice.tsx`): seller block with logo/initials, invoice facts strip, Bill To /
+  Payment cards with status pill, item table with unit, discount (when any), taxable value and GST per line, amount in
+  words (Indian lakh/crore), GST summary per rate, totals with a highlighted Total and Balance due, CANCELLED watermark.
+  "Tax Invoice" only when the shop has a GSTIN, otherwise "Invoice". Prints on A4.
+- Printing goes through `PrintPortal` (a copy under `<body>`), so prints are never clipped to the window and run over
+  as many pages as needed; colours are kept on paper and in PDFs.
+- Barcode & Sticker Labels: dark theme; real Code 128 barcodes (`lib/code128.ts`, checked with a scanner library) instead
+  of decorative bars; sheets sized in mm for 24/40-up A4 sticker paper and 50 × 25 mm thermal rolls (Print used to
+  print a blank page).
+
+## 2026-11-04 (3) — Products lists window, no hover tooltips
+- "Manage lists" is now **Categories & Units** (window: "Categories, Units & GST Rates"); it closes only with ✕, and the
+  "⚙ Edit or delete…" entries are gone from the form's dropdowns. Confirm/prompt pop-ups sit above every window.
+- Both apps: browser hover tooltips are switched off (`lib/noTooltips.ts`); icon buttons keep the hint as their
+  accessible name.
+
+## 2026-11-04 (4) — optional delete reason, credit bills for new customers
+- Deleting (cancelling) a bill: the reason is optional (engine and app).
+- POS: a credit / part-paid bill for someone typed in by hand no longer errors. The cashier is asked (Yes/No): an
+  existing customer with the same phone is reused, otherwise the person is added to Customers and the bill saved on
+  their account. With no name typed (Walk-in), the name is asked first.
+
+## 2026-11-04 (5) — customer advances
+- A negative customer balance is an advance (customer's money the shop holds). Shown as "₹X advance" / "₹X due"
+  instead of "₹-X". New **Return advance** (₹ button when there is an advance → `POST /customers/:id/refund`): a
+  refund paid out, shown in the statement, balance back to 0. Delete-customer message says who owes whom.
+- POS, paid bills (Cash/UPI/Card): when a name was typed instead of picking a customer, the cashier is asked
+  "Save this customer?" (Yes → added to Customers and the bill linked; No → bill keeps the typed name only). A phone
+  that matches an existing customer offers to add the bill to their account.
+
+## 2026-11-04 (6) — audit: money, stock, security, speed
+Fixed
+- Delete bill erased its payment rows (cascade): a payment kept as the customer's advance vanished from the cash book
+  while the advance stayed (the −₹142 case). Payments are now kept, only unlinked from the deleted bill.
+- Customer advances settle open bills (`applyCustomerAdvance`): after a new credit bill, a bill cancelled without
+  refund, store-credit returns and ledger credits. Balance, open bills and statement always agree (tested invariant).
+- Sales / purchase returns rewritten: validated input, quantity capped at what is left to return, valued at what the
+  bill actually charged (discounts, tax-inclusive), untracked products not restocked, store credit needs a customer,
+  the bill's unpaid part is settled first, cash refunds recorded in the cash book (migration v3 backfills old ones),
+  statements show every credit/debit note, numbers never repeat, local (IST) dates.
+- Online order → bill and production runs always failed (SQL used columns that do not exist). Online orders now go
+  through the normal billing engine (GST, delivery line, payment, no double bill).
+- Admin two-step login could be switched off from a stolen session (setup reset it); login timing no longer reveals
+  which emails exist.
+- UTC dates (day off before 05:30 IST) in returns, transfers, production, fee receipts, online orders, service summary.
+- BOM codes / transfer numbers no longer repeat after deletions.
+- App shows the real error text for older screens (`error` field).
+Speed
+- Indexes for the duplicate-sale check (every POS sale) and bill lines (every bill opened); both were full scans.
+Checks
+- `npm run check:sql` compiles all 544 static SQL statements against a fresh database (0 failures).
+- New `test/money.test.ts` (10 tests). Engine 85/85, licence server 30/30 (+1 skipped).
+
+## 2026-11-04 (7) — barcode scanners everywhere
+- `lib/scanner.ts`: any USB/Bluetooth keyboard scanner works on every screen without clicking into a box. A scan is
+  told apart from typing by speed; scanned into an ordinary field (e.g. customer name) the characters are taken back
+  out. Fields marked `data-scan-input` keep scans as text. Scanners without an Enter suffix work too. Counter beep.
+- POS: scan anywhere adds to the bill (products beyond the loaded list looked up; unknown code → add as product).
+  Products: scan opens the product, or a new one with the barcode filled in. Invoices: scanned bill number opens it.
+  Returns: scan the bill, then scan each item coming back. Purchases: scan adds the item. Inventory: finds it.
+  Barcode labels: picks the product. Any other screen: pop-up with price / MRP / stock → Sell / Stickers / Edit.
+- Every bill (A4 and thermal) prints its bill number as a Code 128 barcode.
+- Engine: `GET /products?code=` matches barcode or SKU exactly.
+
+## 2026-11-04 (8) — leftover ₹142 cash, loyalty screen
+- Customers who owe money or hold an advance always show in Customers, even when made inactive (one was hidden with
+  a ₹142 advance, so nothing could clear it). New **Undo** on payment rows of a customer's statement
+  (`POST /customers/:id/payments/:paymentId/void`): the payment is marked VOID, balance and bill restored.
+- Dashboard payment summary leaves out modes that net to ₹0.
+- Loyalty screen: engine/screen field names did not match (every row "Customer", reversals shown as +, empty
+  balance, rule changes not saved, "Redeemed" adjustments added points). Translated in `api.ts`; removed customers'
+  history hidden; deleting a cancelled bill removes its earned + reversed points rows.
+
+## 2026-11-05 — dark theme: Backup, Audit Logs, Help & Support
+- These three pages were light-only (white cards, dark headings, white inputs). Now the same slate/emerald dark
+  styling as the rest of the app: cards, tables, inputs, file picker, badges, notices and pop-ups; page titles match
+  the other screens. Light mode unchanged in look. No other page was missing dark classes.
+
+## 2026-11-08 — launch speed and the taskbar icon (both apps)
+- Taskbar: the native start screen was a "tool window", which Windows never shows in the taskbar; the app's own window
+  (hidden until the first screen) was the only button. The start screen is now a normal taskbar window with the app's
+  icons (verified: button with icon from ~30 ms).
+- Client, first screen drawn (this PC, warm): ~720 ms → ~470 ms. Engine starts first thing (15 ms, not after 400 ms),
+  its file check runs alongside it (the key is handed over only after every file matches), the window is made at once
+  instead of waiting for it. First launch after install/update (new files scanned by Defender): ~1.5 s → ~1.0 s.
+- Both apps: `core:default` (dozens of framework commands the pages never call) compiled to ~200 ms of URL rules at every
+  start; capabilities now list only the commands the pages use (window controls, event listen/unlisten). Checked from
+  inside the pages that each still works and that unlisted ones stay refused.
+- Admin: relay starts first and the window opens straight on it; the panel's own files are kept in
+  %LOCALAPPDATA%\in.apnabilling.admin\panel-cache (stale-while-revalidate): opens without waiting for the server
+  (~0.4 s), refreshes in the background, and reloads into a newer panel if the server has one (checked).
+- `APNA_TRACE=1` prints start-up timing marks (ms since the process was created). `splash::first_instance` replaces
+  the window check as the "already running" test.
+
+## 2026-11-10 — shop sign-in in the Admin Panel, forgot password, grey dark theme, F11 full screen
+
+- **App sign-in (Admin Panel → Customers → a customer).** The billing app reports the owner's email and password with
+  its licence check (at sign-up, sign-in and after a reset; `account_sync` table, engine migration v4). The server keeps
+  the password encrypted (AES-256-GCM, key derived from the signing key; `license-server/src/accounts.ts`, migration
+  `003_app_accounts`). Owners can show it (each look is audit-logged as `APP_PASSWORD_VIEWED`); admins can set a new
+  email/password, which is pushed to the shop's computers and taken over at once when online (`app_account_rev` /
+  `installations.account_rev`). Customer rows never carry the stored password to the panel.
+- **Forgot password (billing app login).** A 6-digit code is emailed by the server (nodemailer; 10 minutes, 5 tries,
+  one code at a time, rate-limited per IP and per email, same answer for unknown emails). The new password is set on
+  the computer only after the server accepts the code, and every computer of the shop takes it over.
+  Mail settings: Admin Panel → System Settings → "Email for password reset codes" (password kept encrypted, "Send test").
+- **Admin dark theme is neutral grey** (the slate scale is CSS variables, swapped to charcoal greys in dark mode).
+  The chosen theme is saved by the Admin app on disk (`%LOCALAPPDATA%\in.apnabilling.admin\theme`) and injected into
+  the page, the start screen and the window background on the next launch.
+- **F11 full screen in both apps.** Maximize in full screen goes to a maximized window; minimize/restore keeps full
+  screen; the page settles in with a short zoom on each change (`lib/windowState.ts`, same file in both).
+- Tests: `license-server/test/accounts.test.ts`; checked end to end with the engine against a local HTTPS server and a
+  local mail sink, and in a side-by-side test build of the Admin app.
+
+## 2026-11-13 — several businesses on one computer
+
+- **One encrypted database file per business** (like company files in Tally): the first stays at
+  `data/apna_billing.db` (+ `data/backups`), each added business gets `data/shops/<id>/apna_billing.db` (+ `backups`);
+  `data/shops.json` lists them (names for the sign-in screen) and remembers the one in use. `server/src/db/shops.ts`.
+- `db` (db/connection.ts) is now a proxy to the current business's database, chosen per request with
+  AsyncLocalStorage: the signed-in token's `shopId` (missing in old tokens = "main"), else `?shop=`, else the business in
+  use. Work that continues after an await stays on its business, so two businesses can be signed in at once and a
+  switch never sends a write to the wrong file. Background jobs (licence sync, live link, scheduled backups) run for
+  the business in use and move when another one signs in (`onActiveShopChanged`); the realtime loop has a generation
+  number so a restarted link ends the old one. Licence events carry their business; the UI stream filters on it.
+- **Licence per business** (decided 2026-11-13): each business is its own installation and its own customer in the
+  Admin Panel. The first business keeps the computer's fingerprint (existing installs unchanged); others send
+  sha256(machine|shopId) plus `machine`, stored as `installations.machine_hash` (license-server migration
+  `004_machine`) so "one free trial per computer" still applies to the whole computer.
+- Sign-up on a computer that already has a business adds a new business (an erased business's empty file is reused).
+  Each business needs its own sign-in email (Gmail plus-addresses suggested). Sign-in finds the business by email; the
+  same sign-in in two businesses asks which one (`CHOOSE_BUSINESS`). Forgot password works across businesses.
+- App: user menu → Switch business (instant while that business is still signed in here; otherwise its sign-in) and
+  Add a new business (with a way back). A paused/revoked business offers to open the others.
+- Backups carry the business name in the file name; `account_sync` is never overwritten by a restore.
+- Tests: `server/test/businesses.test.ts`, license-server `accounts.test.ts` (two businesses on one PC). Checked end to
+  end with the engine + a local licence server, and the screens in headless Edge.
+
+## 2026-11-15 — the same account on a second computer; the same layout on every screen
+
+- **Sign-in on another computer** (licences with more than one device): a sign-in this computer does not know is
+  checked by the licence server (`POST /api/client/v1/account/sign-in`, rate-limited per IP and per email) against the
+  sign-in the shop's app keeps there (2026-11-10). If it matches and the licence has a free device, this computer is
+  activated as one more device and the business and owner are set up locally (`openFromServer` in the engine's
+  authController, `createBusinessWithOwner` shared with sign-up). Older accounts without saved details are asked for
+  state and business type once (`ACCOUNT_DETAILS_NEEDED`). The server now keeps the business details for this
+  (`customers.profile_json`, migration `005_customer_profile`; sent with registration and with sign-in reports).
+  Accounts whose password has not reached the server yet get `NOT_ON_SERVER_YET` (sign in once on the first computer
+  after updating). Bills and stock stay per computer; the app says so and points to backup/restore.
+- **Same layout on every screen:** both apps zoom the whole page to fit the screen's work area the way the 2560×1600
+  @150% design screen does (1707×1019 logical; 80%–135%), refit when moved to another monitor, and Ctrl + / − / 0
+  adjust it (remembered). `lib/uiScale.ts` (same file in both); permission `core:webview:allow-set-webview-zoom`.
+  Checked in a test build: zoom applies, the page's screen size is unaffected by zoom, the choice survives a restart.
+- Test builds of the admin app (`APNA_TEST_IDENTIFIER`) keep their own WebView profile (they shared the installed
+  app's before).
+
+## 2026-11-15 (later) — second-computer sign-in bug; full device control; uninstall clean-up
+
+- **"License server response failed signature verification" on a second PC** was not a signature problem: the compiled
+  licensing core (`native/apna-core`, Rust) linked the Visual C++ runtime dynamically (VCRUNTIME140.dll), so it could
+  not load on computers without the VC++ Redistributable, and `storeActivation` reported every failure as a bad
+  signature. Now built with `+crt-static` (`native/apna-core/.cargo/config.toml`; checked: neither engine DLL imports
+  the runtime), and the error says what really failed (`LICENSE_CORE_UNAVAILABLE` / the token error code).
+- **Device control (Admin Panel):** delete icon on every device list (Installations, licence, customer) and "Delete
+  device" on a device page (`DELETE /api/admin/v1/installations/:id`): a running computer is signed out (live push or
+  next connection) and keeps its data — a tombstone (`removed_installations`, migration `006_device_removal`) makes the
+  server answer `INSTALLATION_DELETED`, which the app treats as a sign-out (own reason, so the start-up check never
+  erases it), not as a deleted customer. "UNINSTALLED" badge; warnings when active devices exceed the limit or all
+  activations are used.
+- **The shop's app:** License page → "Computers on this licence" lists every device; the owner can sign another one out
+  (`GET /devices`, `POST /devices/:id/deactivate`, client API; engine `/license/devices`).
+- **Uninstall:** the uninstaller runs `Apna Billing.exe --uninstall` (new Installer Studio option "When uninstalled,
+  start the program with", `uninstallArgs`; never on an update: the installer now runs the old uninstaller with
+  `/UPGRADE`, and a silent uninstall adds `--quiet`). The shell starts the engine in uninstall mode (handshake
+  `"uninstall": true`): every business tells the server (`POST /uninstalled`: slot freed, `uninstalled_at`, admin
+  notification `APP_UNINSTALLED`), then asks (default Yes; `--quiet` skips) and deletes %APPDATA%\ApnaBilling and the
+  window storage. Tested: Installer Studio `uninstall_clean_up_not_on_upgrade` (upgrade does not run it, uninstall
+  does) and `install_upgrade_uninstall`; the sealed engine reported two businesses; the shell deleted a test data folder.
+  Installs get the new uninstaller with their next update (older uninstallers have no clean-up step).
+- Licence page → Devices: "Installed and in use now: N · signed out · uninstalled", **Reset activations** (sets
+  "Activations used", default = computers in use) and **Set device limit** (default = computers in use).
+  `PUT /api/admin/v1/licenses/:id` accepts `activationsCount` (audit-logged). Test in `accounts.test.ts`.
+- The 1.0.0+9 client installer was made by an older Installer Studio installed in %LOCALAPPDATA% (2026-11-03), so it
+  had no uninstall clean-up (uninstalling on DELL-G15 neither told the server nor deleted data). `apna_vps.py` now uses
+  the newest of the installed copy and the source build (`_newest_studio`).
+- Lite mode (`lib/performance.ts`, both apps): 4 or fewer threads or ≤ 4 GB memory → no backdrop blur and no
+  animations. Engine databases: `cache_size = -16000`, `temp_store = MEMORY`.
+- **The billing app forgot its theme (and its saved sign-ins and zoom) at every start**: the engine listened on a random
+  port each time, and a page's saved storage belongs to its address. The engine now uses 127.0.0.1:47832 when free
+  (any free port otherwise; `tauri/sidecar/run-server.cjs`), and the shell also keeps the theme on disk
+  (`<data>/ui-theme`, command `apna_set_theme`): the start screen, the window background and the page (an
+  initialization script sets `<html data-apna-theme>`) open in it from the first frame. Test runs with
+  `--apna-data-dir` keep their own window storage. Checked in a test copy: Dark survives a normal restart.
+
+### 2026-11-15 — A second computer with the business already set up joins the account's licence
+- Case: on another PC the business existed locally (signed up again, or left from an earlier install) but was not
+  connected to a licence; "Start my free trial" was refused ("A free trial has already been used with this email
+  address") and the computer never appeared in the Admin Panel, although the device limit was 2.
+- The engine's `startTrial` now answers that refusal by joining the account's licence (`joinAccountLicense`, via the
+  server's `/account/sign-in` with `activate`), using the password kept from the last sign-in. If this computer's
+  password differs from the account's, the activation page asks for the account password (`ACCOUNT_PASSWORD_NEEDED`,
+  new engine route `POST /license/join`); it then becomes this computer's password too.
+- Verified with a local licence server and three engines: join with the same password (2 devices active), password
+  asked when different, wrong password refused, sign-in with the account password afterwards. Engine tests: 91 pass.
+- Needs a client update; no licence-server change.
+
+### 2026-11-15 — Sign-in at every start; signing in on another computer goes straight to the dashboard; startup log
+- Sign-in is asked for every time the desktop app is opened again (index.html: a new start, seen by an empty
+  sessionStorage, drops `apna_billing_token` / `apna_billing_sessions`; reloads keep them; theme and zoom stay). It had
+  become "remembered" only because the engine now keeps the same address between starts.
+- Sign-in to a business that is here but has no licence (set up again, set up offline, left from an earlier install):
+  the engine joins the account's licence with the typed password (`joinIfAccountLicensed`; not after the vendor turned
+  the computer off or removed it), so the dashboard opens directly. Sign-up with an email + password that already has an
+  account on the server opens that account here (`openFromServer`) instead of a second business; device limit,
+  suspended or expired accounts are reported at once. LicenseContext re-reads the licence after every sign-in.
+- The desktop shell keeps its startup timings in `<data dir>/startup.log` (last starts only) to find out why a start
+  is slow on a given computer. Measured here: first start of a fresh install 1.4 s (≈1.2 s is Windows scanning the 97 MB
+  engine), later starts ≈0.5 s.
+- Verified: local licence server + engines (sign-up again → ACTIVE on the licence; offline-made business → joins on
+  sign-in, 3 devices active); desktop test copy (reload keeps sign-ins, restart clears them, theme kept). Engine tests pass.
+
+### 2026-11-15 — Second PC still saw "Start free trial": it never got the update; sign-in now always reconnects
+- Cause: updates reach a computer only with its licence check, so an unlicensed computer (the client's second PC)
+  never heard of the new version and kept the old screens. Also, the new auto-join skipped computers the admin had
+  deleted from the list.
+- `offerUpdateWithoutLicence` (jobs: 4 s after start, then every sync interval): businesses without a licence read
+  the public `/updates/latest.json` and get an update offer; the update prompt is now shown on the sign-in, sign-up and
+  licence screens as well.
+- Sign-in with the account password reconnects any unlicensed business here (also after a delete in the Admin Panel).
+  Reasons worth showing (device limit, activation limit, no active licence, suspended, offline) come with the sign-in
+  and appear on the licence screen. The licence screen has "Already using Apna Billing on another computer? Use that
+  account's licence" (password → `/license/join`).
+- Verified with a local licence server + 3 engines: deleted PC signs in → ACTIVE; unlicensed PC offered 9.9.9 from
+  latest.json. Engine tests pass; client builds.
+
+### 2026-11-15 — Live sync of everything between all computers of one account
+- **What**: every insert / edit / delete in every shared table of a business reaches the account's other computers
+  within ~0.2–0.5 s; open screens reload their lists quietly (no reload, no spinner, cart and forms untouched).
+- **Engine** (`server/src/sync/syncEngine.ts`, migration v5 `sync`): triggers (installed on every open via
+  `onShopOpen`) note changed rows in `sync_outbox` and counter changes in `sync_deltas`. Local tables (licence,
+  backups, printer, system settings, plans) and `businesses.next_invoice_number` are not shared. Counters
+  (`products/clothing_variants.stock_quantity`, `customers.outstanding_balance_paise/loyalty_points`,
+  `suppliers.outstanding_balance_paise`) travel as changes, so concurrent sales all count. A row's own unsent change
+  wins over an incoming copy; unique clashes are settled the same way everywhere (SKU / invoice / PO number renamed
+  with a suffix, other uniques keep the smaller key). Sync runs after every mutating request, on a live-link push
+  (`event: sync`), on reconnect and every 20 s. Each extra computer numbers its own series (INV-B1001, CN-B1001, PO-B…)
+  via `seriesTag()`; the computer with the account's first bills keeps the plain numbers.
+- **Joining**: first computer seeds the account; a computer signing in (or activating) takes the account's data over
+  before the dashboard opens (`takeOverAccountData`), its own records (backed up first, `PRE_SYNC`) are merged in
+  (business and owner re-pointed). Restoring a backup makes it the account's data (`/sync/reset`, epoch); the others
+  take it over (backup first). Erasing a shop affects only that computer.
+- **Licence server** (`routes/sync.ts`, migration `007_sync`): register / push / pull / reset, rows sealed with
+  AES-256-GCM, counter changes folded into the stored copy, idempotent change ids, paging that never skips,
+  pruning of changes every computer has fetched, cleanup on customer / installation delete, `pushSync` over SSE.
+- **Client**: `useLiveRefresh` on 25 screens (Settings excluded while editing), `SyncBadge` (Synced / Syncing /
+  Offline · n waiting / Sync problem), `SYNC_JOINED` notice, wording about data staying on one computer updated.
+- **Verified**: licence-server tests 39 pass (new `test/sync.test.ts`), engine tests 91 pass; multi-engine runs with a
+  local licence server: new device has everything at sign-in, add/edit/delete both ways, concurrent sales (20−2−3,
+  60 sales on 3 PCs → exact), bill series never clash, credit balances, offline catch-up, merge of a computer with its
+  own records (clashing bill renamed), backup restore propagated, live screen update in Edge (~0.5 s, no reload),
+  packaged sealed engine syncing with a second engine; full release build passes.
+- **Deploy order**: upload licence server + Admin Panel first (new tables/routes), then publish the client update.
+
+### 2026-11-15 — Feature use reported as it happens
+- Cause: uses were stored on the computer and uploaded at start-up / every 6 h; the server announced every upload as
+  "Reported use of …" at upload time, so the Admin Panel showed Dashboard use while the client was still on the
+  sign-in screen (yesterday's use, sent on start).
+- Engine: `recordUsage` schedules an upload 2 s later (uses close together go in one report); times go as ISO UTC
+  (SQLite `datetime('now')` had no zone). Requests from lists reloading on their own (`X-Apna-Background: 1`, set by
+  `useLiveRefresh` via `inBackground`) are not counted as use.
+- Licence server: `noteCustomerUsage` announces only uses of the last 2 minutes ("In use now: <business> (<computer>)
+  is using Dashboard, …"); older uses only refresh the figures (no pop-up); the same screens again within a minute
+  do not pop up again.
+- Verified with a local licence server + engine and the admin live stream: sign-in screen → nothing; background
+  reload → nothing; opening the dashboard → announced after ~2 s with business and computer. Tests pass.
+
+### 2026-11-15 — Faster sync when the live link is down; quicker screen updates
+- Without the live link (dropped, reconnecting, blocked by a network) computers only checked every 20 s. Now every
+  3 s while it is down, every 15 s as a safety check while it is up (`jobs.ts`, `msSinceSync`). Local changes are sent
+  30 ms after the request (was 120 ms); screens reload 80 ms after a change arrives (was 250 ms).
+- `syncStatus().live` (from `realtime.ts` via `setLiveLinkCheck`): the badge tooltip says whether changes arrive
+  live or are checked every 3 s. The badge no longer flickers on every check (only real state changes are sent).
+- Measured locally: change on PC1 → PC2's open screen ~0.2 s (was ~0.5 s); live link down right after a server
+  restart → ~2.3 s (was up to 20 s). Could not measure against the VPS from here (its private certificate).
+
+### 2026-11-15 — Animated showcase on the sign-in screen
+- `client/src/components/auth/LoginShowcase.tsx` (left side of the sign-in / sign-up screen, which opens at every
+  start): a looping story drawn in code — barcode scanned, items drop into the bill, GST total counts up, "Paid · UPI",
+  receipt prints, the bill appears on Counter 2 ("Synced in 0.2 s") — with a rotating headline, feature chips and a
+  slow background glow. Keyframes in `index.css` (transform / opacity only). Pauses while the window is hidden.
+- Chosen over an MP4: sharp at every resolution, follows light / dark, a few KB, no codec or start-up cost.
+  Lite mode keeps the story (instant steps) without the blurred glow; "reduce motion" shows the finished picture.
+- Checked in light and dark at 1920×1080 and 2560×1440 (Edge, frame by frame): no overlaps.
+
+### 2026-11-15 — Delete a customer completely (all computers, synced data)
+- Admin Panel → Customers → customer → Delete: the dialog now offers "Erase the shop on its computers too" when
+  computers still use a licence (server: `eraseDevices`), instead of requiring a revoke first. The delete removes the
+  licence(s), installations, usage and the shop's synced data on the server; open computers erase the shop at once
+  (live push `CUSTOMER_DELETED`), others when they next connect (`INSTALLATION_REMOVED`), each after a PRE_ERASE
+  safety backup in its backup folder. Signing in with the old email fails; Sign Up starts a fresh, empty shop.
+- Verified (local licence server, 2 engines, one switched off during the delete): refused without the tick; with it,
+  the open computer erased at once, the switched-off one at its next start; same email signs up again with a new trial
+  and no old products. Licence-server tests pass.

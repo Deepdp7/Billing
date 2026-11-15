@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ShieldCheck, KeyRound, Sparkles, RefreshCw, Lock, AlertTriangle, CheckCircle2, WifiOff, Download, Zap } from 'lucide-react';
-import { api } from '../../lib/api.js';
-import { takeSessionNotice, useLicense, type SessionNotice } from '../../context/LicenseContext.js';
+import { api, type LicenseDevices } from '../../lib/api.js';
+import { takeSessionNotice, useLicense, versionLabel, type SessionNotice } from '../../context/LicenseContext.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { FEATURE_LABELS } from '../../lib/features.js';
 import { confirmDialog } from '../../components/ui/dialogs.js';
@@ -22,20 +22,32 @@ export const LicenseActivationPage: React.FC = () => {
     phone: user?.phone || '',
   });
   const [licenseKey, setLicenseKey] = useState('');
+  // The email has an account (and licence) already: its password connects this computer to it
+  const [joinPassword, setJoinPassword] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<SessionNotice | null>(null);
-  useEffect(() => { setNotice(takeSessionNotice()); }, []);
+  useEffect(() => {
+    setNotice(takeSessionNotice());
+    // Why signing in did not use the account's licence on this computer (device limit, no internet, …)
+    try {
+      const why = JSON.parse(sessionStorage.getItem('apna_license_join') || 'null');
+      sessionStorage.removeItem('apna_license_join');
+      if (why?.message) setError(why.message);
+    } catch { /* nothing kept */ }
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError('');
     try {
-      if (tab === 'trial') await api.startTrial({ ...form, phone: form.phone || undefined });
+      if (joinPassword !== null) await api.joinAccountLicense(joinPassword);
+      else if (tab === 'trial') await api.startTrial({ ...form, phone: form.phone || undefined });
       else await api.activateLicense(licenseKey);
       await refresh();
     } catch (err: any) {
+      if (err.code === 'ACCOUNT_PASSWORD_NEEDED' && joinPassword === null) setJoinPassword('');
       setError(err.message || 'Activation failed');
     } finally {
       setBusy(false);
@@ -58,8 +70,8 @@ export const LicenseActivationPage: React.FC = () => {
           </div>
           <SessionNoticeBanner notice={notice} />
           <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">
-            Your billing data is stored only on this computer. An internet connection is needed once to activate, and occasionally to
-            verify your license — day-to-day billing works offline.
+            Your billing data is kept on this computer and stays the same on every computer you sign in to with this account. Work
+            done while offline is sent on its own once the connection is back.
           </p>
           {license && license.mode !== 'UNLICENSED' && (
             <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex gap-2">
@@ -85,7 +97,16 @@ export const LicenseActivationPage: React.FC = () => {
 
           {error && <div className="p-2.5 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">{error}</div>}
 
-          {tab === 'trial' ? (
+          {joinPassword !== null ? (
+            <>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Your account's licence is used on this computer too (one more device on it).</p>
+              <input className={inputCls} required autoFocus type="password" placeholder="Account password" value={joinPassword}
+                onChange={(e) => setJoinPassword(e.target.value)} />
+              <button type="button" className="text-xs font-semibold text-slate-500 hover:text-emerald-600" onClick={() => { setJoinPassword(null); setError(''); }}>
+                Back
+              </button>
+            </>
+          ) : tab === 'trial' ? (
             <>
               <p className="text-xs text-slate-400">Try every core feature free. No payment details needed.</p>
               <input className={inputCls} required minLength={2} placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -102,9 +123,15 @@ export const LicenseActivationPage: React.FC = () => {
           )}
           <button type="submit" disabled={busy} className="btn-brand w-full rounded-lg py-2 text-sm font-bold flex items-center justify-center gap-2">
             {busy && <RefreshCw className="w-4 h-4 animate-spin" />}
-            {tab === 'trial' ? 'Start my free trial' : 'Activate'}
+            {joinPassword !== null ? 'Use my licence here' : tab === 'trial' ? 'Start my free trial' : 'Activate'}
           </button>
-          <p className="text-[10px] text-slate-500 text-center">Only your name, business name, email and basic device details are sent to activate. Invoices and customer data never leave this computer.</p>
+          {joinPassword === null && (
+            <button type="button" className="w-full text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
+              onClick={() => { setJoinPassword(''); setError(''); }}>
+              Already using Apna Billing on another computer? Use that account's licence
+            </button>
+          )}
+          <p className="text-[10px] text-slate-500 text-center">Your business data is kept on this computer and synced securely (encrypted connection, encrypted storage) with your other computers on the same account through the Apna Billing server.</p>
         </form>
       </div>
     </div>
@@ -129,9 +156,12 @@ export const FeatureLocked: React.FC<{ feature: string; lockedByAdmin?: boolean;
 
 /** Covers the whole app the moment an administrator suspends or revokes access. It goes away on its own when they restore it. */
 export const WorkspaceHold: React.FC = () => {
-  const { license } = useLicense();
+  const { license, system } = useLicense();
+  const { user, switchBusiness } = useAuth();
   const held = license?.enforced && (license.mode === 'SUSPENDED' || license.mode === 'REVOKED');
   if (!held) return null;
+  // Only this business is held: the others on this computer stay open to switch to
+  const others = (system?.businesses || []).filter((b) => b.id !== (user?.shopId || 'main'));
   const revoked = license?.mode === 'REVOKED';
   return (
     <div className="fixed inset-0 z-[1020] flex items-center justify-center bg-slate-950/75 p-6 backdrop-blur-sm">
@@ -142,6 +172,19 @@ export const WorkspaceHold: React.FC = () => {
         <h2 className="text-lg font-bold">{revoked ? 'This license was revoked' : 'Paused by your administrator'}</h2>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{license?.message}</p>
         <p className="mt-3 text-xs text-slate-500">This happened on its own. You do not need to refresh or click anything. Billing stays stopped until access is restored, and your invoices and stock remain on this computer.</p>
+        {others.length > 0 && (
+          <div className="mt-5 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <p className="mb-2 text-xs font-semibold text-slate-600 dark:text-slate-300">Your other businesses on this computer are not affected:</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {others.map((b) => (
+                <button key={b.id} type="button" onClick={() => switchBusiness(b.id)}
+                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+                  Open {b.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -154,10 +197,8 @@ export const LicensePage: React.FC = () => {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [key, setKey] = useState('');
-  const [usage, setUsage] = useState<any[]>([]);
   const isOwner = user?.role === 'BUSINESS_OWNER' || user?.role === 'SUPER_ADMIN';
 
-  useEffect(() => { api.getLocalUsage().then((r) => setUsage(r.data)).catch(() => undefined); }, []);
 
   const run = async (label: string, fn: () => Promise<unknown>, ok: string) => {
     setBusy(label);
@@ -183,7 +224,7 @@ export const LicensePage: React.FC = () => {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2"><ShieldCheck className="w-7 h-7 text-emerald-600" />License & Subscription</h1>
-          <p className="text-sm text-slate-500">App version {license.appVersion}{system ? ` · database schema v${system.schemaVersion}` : ''}</p>
+          <p className="text-sm text-slate-500">App version {versionLabel(license.appVersion)}{system ? ` · database schema v${system.schemaVersion}` : ''}</p>
         </div>
         <button onClick={() => run('sync', api.syncLicense, 'License verified with the server')} disabled={!!busy}
           className="btn-brand flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl">
@@ -238,7 +279,7 @@ export const LicensePage: React.FC = () => {
       {license.update && (
         <div className="p-4 rounded-xl border bg-indigo-50 border-indigo-200 text-indigo-900 text-sm flex items-start gap-3">
           <Download className="w-5 h-5 shrink-0" />
-          <div><b>Update available: version {license.update.latestVersion}</b>{license.update.mandatory && ' (required)'}<div>{license.update.message}</div>
+          <div><b>Update available: version {versionLabel(license.update.latestVersion)}</b>{license.update.mandatory && ' (required)'}<div>{license.update.message}</div>
             {license.update.url && <a className="underline font-semibold" href={license.update.url} target="_blank" rel="noreferrer">Download</a>}</div>
         </div>
       )}
@@ -263,6 +304,8 @@ export const LicensePage: React.FC = () => {
         </div>
       </div>
 
+      {isOwner && license.installationId && <LicenseDevicesCard card={card} />}
+
       {isOwner && (
         <div className={card}>
           <div className="text-xs uppercase font-bold text-slate-400 mb-3">Change license</div>
@@ -279,15 +322,49 @@ export const LicensePage: React.FC = () => {
           <p className="text-[11px] text-slate-500 mt-2">To move to a new computer, deactivate here first to free the device slot. Installation ID: <span className="font-mono">{license.installationId || '—'}</span></p>
         </div>
       )}
+    </div>
+  );
+};
 
-      <div className={card}>
-        <div className="text-xs uppercase font-bold text-slate-400 mb-1">Usage shared with your provider</div>
-        <p className="text-xs text-slate-500 mb-3">Only feature names and daily operation counts are shared — never invoices, customers, products or amounts.</p>
-        <table className="w-full text-sm">
-          <thead className="text-xs text-slate-400 text-left"><tr><th className="py-1">Feature</th><th>Operations</th><th>Last used</th><th>Waiting to sync</th></tr></thead>
-          <tbody>{usage.map((u) => <tr key={u.feature_key} className="border-t border-slate-100 dark:border-slate-800"><td className="py-1">{FEATURE_LABELS[u.feature_key] || u.feature_key}</td><td>{u.count}</td><td>{new Date(u.last_used_at + 'Z').toLocaleString('en-IN')}</td><td>{u.pending_sync}</td></tr>)}
-            {usage.length === 0 && <tr><td colSpan={4} className="py-2 text-slate-400">No usage recorded yet.</td></tr>}</tbody>
-        </table>
+/** The computers using this licence; the owner can sign another one out (it frees a device slot, its data stays) */
+const LicenseDevicesCard: React.FC<{ card: string }> = ({ card }) => {
+  const [data, setData] = useState<LicenseDevices | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState('');
+  const load = () => api.licenseDevices().then((d) => { setData(d); setError(''); }).catch((e) => setError(e.message || 'Could not load the computers'));
+  useEffect(() => { void load(); }, []);
+  const signOut = async (d: LicenseDevices['devices'][number]) => {
+    if (!(await confirmDialog(`Sign ${d.deviceName} out of this licence? It stops billing until it is activated again, and frees one device slot. Its data stays on that computer.`, { danger: true }))) return;
+    setBusy(d.id);
+    try { setData(await api.signOutDevice(d.id)); } catch (e: any) { setError(e.message || 'Could not sign it out'); } finally { setBusy(''); }
+  };
+  const active = data?.devices.filter((d) => d.status !== 'DEACTIVATED') || [];
+  return (
+    <div className={card}>
+      <div className="text-xs uppercase font-bold text-slate-400 mb-3 flex items-center justify-between">
+        <span>Computers on this licence</span>
+        {data?.maxDevices != null && <span className="normal-case font-semibold text-slate-500">{active.length} of {data.maxDevices} in use</span>}
+      </div>
+      {error && <div className="text-xs text-rose-600 mb-2">{error}</div>}
+      {!data && !error && <div className="text-sm text-slate-500">Loading…</div>}
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        {data?.devices.map((d) => (
+          <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+            <div className="min-w-0">
+              <div className="font-semibold">{d.deviceName}{d.thisComputer && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">THIS COMPUTER</span>}</div>
+              <div className="text-[11px] text-slate-500">
+                {d.uninstalledAt ? 'Uninstalled' : d.status === 'ACTIVE' ? 'Active' : d.status === 'DEACTIVATED' ? 'Signed out' : d.status}
+                {d.lastSeenAt && ` · last seen ${new Date(d.lastSeenAt).toLocaleString('en-IN')}`} · version {d.appVersion}
+              </div>
+            </div>
+            {!d.thisComputer && d.status !== 'DEACTIVATED' && (
+              <button disabled={!!busy} onClick={() => void signOut(d)}
+                className="border border-rose-300 text-rose-600 text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50">
+                {busy === d.id ? 'Signing out…' : 'Sign out'}
+              </button>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -424,7 +501,7 @@ export const LicenseBanner: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
     items.push({ id: 'offline', tone: 'bg-amber-100 text-amber-900', text: `Connect to the internet within ${license.offline.daysRemaining} day(s) so your license can be verified.` });
   }
   for (const n of license.notices) items.push({ id: n.id, tone: n.level === 'CRITICAL' ? 'bg-rose-600 text-white' : 'bg-indigo-50 text-indigo-900', text: `${n.title}: ${n.message}` });
-  if (license.update) items.push({ id: 'update', tone: 'bg-indigo-600 text-white', text: `Version ${license.update.latestVersion} is available. ${license.update.message || ''}` });
+  if (license.update) items.push({ id: 'update', tone: 'bg-indigo-600 text-white', text: `Version ${versionLabel(license.update.latestVersion)} is available. ${license.update.message || ''}` });
   const visible = items.filter((i) => !dismissed.includes(i.id));
   if (visible.length === 0) return null;
   return (

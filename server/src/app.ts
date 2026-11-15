@@ -6,8 +6,33 @@ import { config, APP_VERSION } from './config/index.js';
 import routes from './routes.js';
 import { errorHandler } from './lib/http.js';
 import { embeddedClientHandler } from './lib/embeddedClient.js';
+import jwt from 'jsonwebtoken';
+import { requestSync } from './sync/syncEngine.js';
 import { db } from './db/connection.js';
 import { getSchemaVersion } from './db/migrations.js';
+import { activeShopId, currentShopId, listShops, runInShop, shopExists } from './db/shops.js';
+import type { AuthTokenPayload } from './types/index.js';
+
+/**
+ * Picks the business (database file, see db/shops.ts) a request works on: the one in the signed-in user's token;
+ * without a token (sign-in screen, first start) the one asked for (?shop=) or else the one in use. A token whose
+ * business is no longer on this computer is refused.
+ */
+function selectShop(req: express.Request, res: express.Response, next: express.NextFunction) {
+  let shop: string | undefined;
+  const header = req.headers.authorization;
+  if (header?.startsWith('Bearer ')) {
+    try {
+      shop = (jwt.verify(header.slice(7), config.jwtSecret) as AuthTokenPayload).shopId || 'main';
+    } catch { /* an invalid token is answered by the route's own check */ }
+    if (shop && !shopExists(shop)) {
+      res.status(401).json({ code: 'INVALID_TOKEN', message: 'This business is no longer on this computer' });
+      return;
+    }
+  }
+  if (!shop && typeof req.query.shop === 'string' && shopExists(req.query.shop)) shop = req.query.shop;
+  runInShop(shop || activeShopId(), next);
+}
 
 export function createApp() {
   const app = express();
@@ -26,6 +51,15 @@ export function createApp() {
   });
 
   app.use(express.json({ limit: '5mb' }));
+  app.use('/api', selectShop);
+  // Whatever a request changed goes to the account's other computers right after it (the triggers noted it)
+  app.use('/api', (req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS') {
+      const shop = currentShopId();
+      res.on('finish', () => requestSync(shop));
+    }
+    next();
+  });
 
   if (config.isDev && process.env.NODE_ENV !== 'test') {
     app.use((req, res, next) => {
@@ -51,7 +85,9 @@ export function createApp() {
       schemaVersion: getSchemaVersion(db),
       demoMode: config.demoMode,
       singleTenant: config.singleTenant,
-      setupRequired: businesses === 0,
+      // Nothing set up yet on this computer (the first sign-up screen); otherwise the businesses to sign in to
+      setupRequired: businesses === 0 && listShops().length === 0,
+      businesses: listShops().map((s) => ({ id: s.id, name: s.name, category: s.category })),
       licenseEnforced: config.licensing.enforce,
     });
   });

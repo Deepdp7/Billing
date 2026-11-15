@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
 import { db } from '../../db/connection.js';
+import { localDate } from '../../lib/dates.js';
 import { v4 as uuidv4 } from 'uuid';
 
 // --- Service Appointments ---
@@ -422,7 +423,7 @@ export function getServiceSummary(req: AuthenticatedRequest, res: Response): voi
   try {
     const businessId = req.businessId!;
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = localDate();
     const aptRow = db.prepare(`
       SELECT 
         COUNT(*) as total_today,

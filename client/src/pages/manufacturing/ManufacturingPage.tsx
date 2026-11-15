@@ -9,6 +9,7 @@ import { BomRecipe, ProductionOrder, ProductionOrderStatus } from '../../types/i
 import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export function ManufacturingPage() {
   const [activeTab, setActiveTab] = useState<'boms' | 'orders' | 'inventory'>('boms');
   const [boms, setBoms] = useState<BomRecipe[]>([]);
@@ -67,8 +68,10 @@ export function ManufacturingPage() {
     loadData();
   }, [activeTab, statusFilter]);
 
-  const loadData = async () => {
-    setIsLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadData(true); });
+  const loadData = async (quiet?: unknown) => {
+    if (quiet !== true) setIsLoading(true);
     try {
       const [bomsRes, ordersRes, statsRes, prodsRes] = await Promise.all([
         api.getBoms({ search: searchQuery || undefined }),

@@ -88,6 +88,27 @@ export async function pushRefresh(target: PushTarget, reason: string): Promise<n
   }
 }
 
+/**
+ * Another computer of this account changed something: its other connected computers fetch it now (the push carries
+ * no data; they ask for it over their own authenticated connection). Never throws.
+ */
+export async function pushSync(customerId: string, except: string): Promise<number> {
+  try {
+    const connected = [...streams.keys()].filter((id) => id !== except);
+    if (connected.length === 0) return 0;
+    const ids = (await knex('installations').whereIn('id', connected).where({ customer_id: customerId }).select('id')).map((r: any) => r.id);
+    const data = JSON.stringify({ at: new Date().toISOString() });
+    for (const id of ids) for (const res of streams.get(id) || []) res.write(`event: sync
+data: ${data}
+
+`);
+    return ids.length;
+  } catch (err) {
+    console.warn('[realtime] sync push failed', err);
+    return 0;
+  }
+}
+
 /** Close every stream (server shutdown / tests). Clients reconnect on their own. */
 export function closeAllStreams(): void {
   for (const set of streams.values()) for (const res of set) res.end();

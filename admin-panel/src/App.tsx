@@ -3,7 +3,7 @@ import {
   LayoutDashboard, Users, MonitorSmartphone, Hourglass, BadgeIndianRupee, Layers, ToggleRight, BarChart3, History,
   PauseCircle, CalendarX, Megaphone, ScrollText, Settings, UserCog, LogOut, Zap, KeyRound,
   Eye, EyeOff, ArrowRight, Radio, Building2, Rocket } from 'lucide-react';
-import { api, post, session, setUnauthorizedHandler } from './api';
+import { api, post, prefetch, session, setUnauthorizedHandler } from './api';
 import { Button, cx } from './components/ui';
 import { OverviewPage } from './pages/Overview';
 import { CustomersPage, CustomerDetail } from './pages/Customers';
@@ -15,15 +15,26 @@ import { UsagePage } from './pages/Usage';
 import { EventsPage, NoticesPage, AuditPage, SettingsPage, AdminUsersPage, SecurityPage } from './pages/Admin';
 import { UpdatesPage } from './pages/Updates';
 import { LiveFeed } from './live';
+import { desktop, isDesktopApp } from './lib/desktop';
 import { ThemeSwitch } from './theme';
 
 export type Role = 'OWNER' | 'ADMIN' | 'SUPPORT' | 'VIEWER';
 export interface Admin { id: string; email: string; name: string; role: Role; totpEnabled: boolean }
-export interface Route { page: string; id?: string; params?: Record<string, string> }
+/**
+ * `from`: on a detail page, the menu item it was opened from. `list`: for a licence, the licence list it belongs to
+ * (set once the licence has loaded).
+ */
+export interface Route { page: string; id?: string; params?: Record<string, string>; from?: string; list?: string }
 
 const RANK: Record<Role, number> = { VIEWER: 0, SUPPORT: 1, ADMIN: 2, OWNER: 3 };
 
-interface Ctx { admin: Admin; nav: (page: string, id?: string, params?: Record<string, string>) => void; can: (r: Role) => boolean }
+interface Ctx {
+  admin: Admin;
+  nav: (page: string, id?: string, params?: Record<string, string>) => void;
+  can: (r: Role) => boolean;
+  /** A licence page reports which list the licence belongs to (trials, paid, suspended, expired) */
+  setLicenseList: (id: string, list: string) => void;
+}
 const AppCtx = createContext<Ctx>(null as any);
 export const useApp = () => useContext(AppCtx);
 
@@ -40,7 +51,7 @@ const NAV: Array<{ page: string; label: string; icon: any; min?: Role; group: st
   { page: 'plans', label: 'Subscription Plans', icon: Layers, group: 'Control' },
   { page: 'features', label: 'Feature Permissions', icon: ToggleRight, group: 'Control' },
   { page: 'notices', label: 'Notifications', icon: Megaphone, group: 'Control' },
-  { page: 'updates', label: 'App Updates', icon: Rocket, min: 'OWNER', group: 'Control' },
+  { page: 'updates', label: 'Updates & Releases', icon: Rocket, min: 'OWNER', group: 'Control' },
   { page: 'audit', label: 'Audit Logs', icon: ScrollText, min: 'ADMIN', group: 'System' },
   { page: 'settings', label: 'System Settings', icon: Settings, group: 'System' },
   { page: 'admins', label: 'Admin Users', icon: UserCog, min: 'OWNER', group: 'System' },
@@ -48,9 +59,21 @@ const NAV: Array<{ page: string; label: string; icon: any; min?: Role; group: st
 ];
 
 function readRoute(): Route {
-  const [page, id] = window.location.hash.replace(/^#\/?/, '').split('/');
-  return { page: page || 'overview', id: id || undefined };
+  const [page, id, from] = window.location.hash.replace(/^#\/?/, '').split('/');
+  return { page: page || 'overview', id: id || undefined, from: (id && from) || undefined };
 }
+
+export const LICENSE_LISTS = ['trials', 'paid', 'suspended', 'expired'];
+
+/**
+ * The menu item lit for a route: the section you are in. A licence opened from one of the licence lists keeps that
+ * list lit (a suspended trial opened from Trial Licenses stays there); opened from anywhere else (Installations,
+ * Customers, Overview, …) it lights the list the licence belongs to.
+ */
+const menuItem = (r: Route) => {
+  if (r.page !== 'licenses' || !r.id) return r.page === 'licenses' ? 'paid' : r.page;
+  return r.from && LICENSE_LISTS.includes(r.from) ? r.from : r.list || 'paid';
+};
 
 function Login({ onDone }: { onDone: (a: Admin) => void }) {
   const [email, setEmail] = useState('');
@@ -206,7 +229,11 @@ export function App() {
 
   useEffect(() => {
     setUnauthorizedHandler(() => setAdmin(null));
-    const onHash = () => setRoute(readRoute());
+    // Same page as now (our own navigation): keep what the address does not hold (params, the licence's list)
+    const onHash = () => setRoute((r) => {
+      const next = readRoute();
+      return next.page === r.page && next.id === r.id && next.from === r.from ? { ...next, params: r.params, list: r.list } : next;
+    });
     window.addEventListener('hashchange', onHash);
     if (session.get()) {
       api<{ admin: Admin }>('GET', '/auth/me').then((r) => setAdmin(r.admin)).catch(() => session.clear()).finally(() => setChecking(false));
@@ -214,15 +241,46 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  if (checking) return <div className="min-h-screen flex items-center justify-center bg-slate-100 text-sm text-slate-500 dark:bg-slate-950 dark:text-slate-400">Loading…</div>;
+  // The Admin app's window stays hidden until the first real page is drawn, then appears with it (never empty)
+  useEffect(() => { if (!checking && isDesktopApp()) void desktop.ready(); }, [checking]);
+
+  // The main pages' data is loaded ahead (api.ts), so they open with it instead of "Loading…"; again a moment after
+  // the server says something changed, so pages not open yet stay current too. Only what this role may see.
+  useEffect(() => {
+    if (!admin) return;
+    const rank = RANK[admin.role];
+    const paths = [
+      '/dashboard', '/customers', '/installations', '/licenses?type=TRIAL', '/licenses?type=PAID', '/licenses?status=SUSPENDED',
+      '/licenses?status=EXPIRED', '/events', '/plans', '/features', '/feature-overrides', '/notices', '/settings',
+      ...(rank >= RANK.ADMIN ? ['/audit-logs'] : []),
+      ...(rank >= RANK.OWNER ? ['/admin-users', '/app-updates'] : []),
+    ];
+    prefetch(paths);
+    let timer = 0;
+    const again = () => { window.clearTimeout(timer); timer = window.setTimeout(() => prefetch(paths), 1500); };
+    window.addEventListener('apna:admin-refresh', again);
+    return () => { window.clearTimeout(timer); window.removeEventListener('apna:admin-refresh', again); };
+  }, [admin]);
+
+  // Same start screen as the Admin app's window and index.html (styles in index.html)
+  if (checking) {
+    return (
+      <div className="boot" role="status" aria-label="Loading">
+        <div><img src="/app-icon.png" alt="" /><b>Apna Billing Admin</b><span><i /></span></div>
+      </div>
+    );
+  }
   if (!admin) return <Login onDone={setAdmin} />;
 
   const nav = (page: string, id?: string, params?: Record<string, string>) => {
-    window.location.hash = `/${page}${id ? `/${id}` : ''}`;
-    setRoute({ page, id, params });
+    const from = id ? menuItem(route) : undefined;
+    window.location.hash = `/${page}${id ? `/${id}/${from}` : ''}`;
+    setRoute({ page, id, params, from });
     window.scrollTo(0, 0);
   };
   const can = (r: Role) => RANK[admin.role] >= RANK[r];
+  const setLicenseList = (licenseId: string, list: string) =>
+    setRoute((r) => (r.page === 'licenses' && r.id === licenseId && r.list !== list ? { ...r, list } : r));
   const logout = async () => {
     try { await post('/auth/logout'); } catch { /* session may already be gone */ }
     session.clear();
@@ -245,17 +303,18 @@ export function App() {
     case 'events': content = <EventsPage />; break;
     case 'notices': content = <NoticesPage />; break;
     case 'updates': content = <UpdatesPage />; break;
+    case 'release': content = <UpdatesPage />; break; // the former Build & Release page
     case 'audit': content = <AuditPage />; break;
     case 'settings': content = <SettingsPage />; break;
     case 'admins': content = <AdminUsersPage />; break;
     case 'security': content = <SecurityPage />; break;
     default: content = <OverviewPage />;
   }
-  const activePage = page === 'licenses' ? 'paid' : page;
+  const activePage = menuItem(route);
   const groups = [...new Set(NAV.map((n) => n.group))];
 
   return (
-    <AppCtx.Provider value={{ admin, nav, can }}>
+    <AppCtx.Provider value={{ admin, nav, can, setLicenseList }}>
       <div className="flex h-full min-h-0 bg-slate-100 dark:bg-slate-950">
         <aside className="flex h-full w-60 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <div className="h-14 flex items-center gap-2.5 px-4 border-b border-slate-200 dark:border-slate-800">
@@ -290,7 +349,8 @@ export function App() {
             <Button tone="ghost" onClick={logout} className="mt-2 w-full"><LogOut className="w-3.5 h-3.5" />Sign out</Button>
           </div>
         </aside>
-        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-slate-100 p-6 dark:bg-slate-950">{content}</main>
+        {/* Keyed by page: each page settles in (ui-page, index.css) and starts scrolled to the top */}
+        <main key={`${page}/${id || ''}`} className="ui-page min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-none bg-slate-100 p-6 dark:bg-slate-950">{content}</main>
       </div>
       <LiveFeed onUnauthorized={() => { session.clear(); setAdmin(null); }} />
     </AppCtx.Provider>

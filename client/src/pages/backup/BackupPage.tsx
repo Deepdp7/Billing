@@ -151,11 +151,11 @@ export const BackupPage: React.FC = () => {
       {/* Page Title */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <HardDrive className="w-7 h-7 text-indigo-600" />
+          <h1 className="text-2xl font-black text-slate-900 dark:text-white font-['Outfit'] flex items-center gap-2">
+            <HardDrive className="w-7 h-7 text-emerald-600 dark:text-emerald-400" />
             Backup & Disaster Recovery
           </h1>
-          <p className="text-gray-500 text-sm mt-1">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
             Verified copies of the complete database are saved as files on this computer (outside the app folder), automatically and on demand.
           </p>
         </div>
@@ -163,37 +163,37 @@ export const BackupPage: React.FC = () => {
         <div className="flex items-center gap-3">
           <button
             onClick={handleExportJson}
-            className="flex items-center gap-2 bg-white hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-xl text-sm font-medium border border-gray-200 shadow-sm transition"
+            className="flex items-center gap-2 bg-white dark:bg-slate-900 dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2 rounded-xl text-sm font-medium border border-slate-200 dark:border-slate-700 shadow-sm transition"
           >
-            <Download className="w-4 h-4 text-indigo-600" />
+            <Download className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             Export All Data (JSON)
           </button>
         </div>
       </div>
 
       {successMessage && (
-        <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
-          <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+        <div className="p-4 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 text-emerald-800 dark:text-emerald-200 rounded-xl text-sm flex items-center gap-2">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
           {successMessage}
         </div>
       )}
 
       {errorMessage && (
-        <div className="p-4 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-sm flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-rose-600 flex-shrink-0" />
+        <div className="p-4 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-rose-800 dark:text-rose-200 rounded-xl text-sm flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400 flex-shrink-0" />
           {errorMessage}
         </div>
       )}
 
       {/* Snapshot Creator Card */}
-      <div className="bg-gradient-to-r from-indigo-50/70 to-blue-50/50 rounded-2xl border border-indigo-100 p-6 shadow-sm">
+      <div className="bg-gradient-to-r from-emerald-50/70 dark:from-emerald-500/10 to-teal-50/50 dark:to-teal-500/5 rounded-2xl border border-emerald-100 dark:border-emerald-500/20 p-6 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-1">
-            <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-indigo-600" />
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
               Create Verified Database Backup
             </h3>
-            <p className="text-sm text-gray-600 max-w-xl">
+            <p className="text-sm text-slate-600 dark:text-slate-300 max-w-xl">
               Copies the entire database (every table) using SQLite's online backup, then checks the copy's integrity. Billing can continue while it runs.
             </p>
           </div>
@@ -204,12 +204,12 @@ export const BackupPage: React.FC = () => {
               placeholder="e.g. Pre-GST Audit Snapshot"
               value={snapshotName}
               onChange={(e) => setSnapshotName(e.target.value)}
-              className="px-4 py-2 border border-gray-200 rounded-xl text-sm bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 sm:w-64"
+              className="w-full px-3 py-2 rounded-xl text-sm bg-white dark:bg-slate-900 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 sm:w-64"
             />
             <button
               type="submit"
               disabled={creating}
-              className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl text-sm font-medium shadow-sm transition disabled:opacity-50"
+              className="flex items-center justify-center gap-2 btn-brand px-5 py-2 rounded-xl text-sm font-medium shadow-sm transition disabled:opacity-50"
             >
               {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
               Create Backup
@@ -221,52 +221,52 @@ export const BackupPage: React.FC = () => {
       {/* Schedule, folder and restore-from-file */}
       {settings && (
         <div className="grid md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-2xl border border-gray-200/80 shadow-sm p-5 space-y-3">
-            <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm"><Settings2 className="w-4 h-4 text-gray-500" />Automatic Backups</h3>
-            <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" checked={settings.autoBackupEnabled} onChange={(e) => setSettings({ ...settings, autoBackupEnabled: e.target.checked })} />
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 space-y-3">
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 text-sm"><Settings2 className="w-4 h-4 text-slate-500 dark:text-slate-400" />Automatic Backups</h3>
+            <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+              <input type="checkbox" className="w-4 h-4 rounded accent-emerald-600" checked={settings.autoBackupEnabled} onChange={(e) => setSettings({ ...settings, autoBackupEnabled: e.target.checked })} />
               Back up automatically
             </label>
             <div className="grid grid-cols-2 gap-3 text-xs">
-              <label className="space-y-1"><span className="font-semibold text-gray-600">Every (hours)</span>
+              <label className="space-y-1"><span className="font-semibold text-slate-600 dark:text-slate-300">Every (hours)</span>
                 <input type="number" min={1} max={168} value={settings.autoBackupIntervalHours} onChange={(e) => setSettings({ ...settings, autoBackupIntervalHours: e.target.value })}
-                  className="w-full px-3 py-1.5 border border-gray-200 rounded-lg" /></label>
-              <label className="space-y-1"><span className="font-semibold text-gray-600">Keep last (automatic)</span>
+                  className="w-full px-3 py-1.5 rounded-xl text-sm bg-white dark:bg-slate-900 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" /></label>
+              <label className="space-y-1"><span className="font-semibold text-slate-600 dark:text-slate-300">Keep last (automatic)</span>
                 <input type="number" min={1} max={365} value={settings.keepAutoBackups} onChange={(e) => setSettings({ ...settings, keepAutoBackups: e.target.value })}
-                  className="w-full px-3 py-1.5 border border-gray-200 rounded-lg" /></label>
+                  className="w-full px-3 py-1.5 rounded-xl text-sm bg-white dark:bg-slate-900 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500" /></label>
             </div>
-            <label className="block space-y-1 text-xs"><span className="font-semibold text-gray-600">Backup folder (use a USB / second drive for extra safety)</span>
-              <input value={settings.backupDir} onChange={(e) => setSettings({ ...settings, backupDir: e.target.value })} className="w-full px-3 py-1.5 border border-gray-200 rounded-lg font-mono" /></label>
-            <p className="text-[11px] text-gray-500">Manual, pre-update and pre-restore backups are never deleted automatically, and the last verified backup is always kept.</p>
-            <button onClick={handleSaveSettings} disabled={savingSettings} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50">Save settings</button>
+            <label className="block space-y-1 text-xs"><span className="font-semibold text-slate-600 dark:text-slate-300">Backup folder (use a USB / second drive for extra safety)</span>
+              <input value={settings.backupDir} onChange={(e) => setSettings({ ...settings, backupDir: e.target.value })} className="w-full px-3 py-1.5 rounded-xl text-sm bg-white dark:bg-slate-900 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono" /></label>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">Manual, pre-update and pre-restore backups are never deleted automatically, and the last verified backup is always kept.</p>
+            <button onClick={handleSaveSettings} disabled={savingSettings} className="btn-brand px-4 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50">Save settings</button>
           </div>
-          <div className="bg-white rounded-2xl border border-gray-200/80 shadow-sm p-5 space-y-3">
-            <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm"><Upload className="w-4 h-4 text-gray-500" />Restore from a Backup File</h3>
-            <p className="text-xs text-gray-600">Choose a <span className="font-mono">.db</span> backup file (for example from a USB drive or another computer). It is integrity-checked before anything changes, and the current data is backed up first.</p>
-            <input type="file" accept=".db,.sqlite,.sqlite3,.bak" onChange={(e) => setRestoreFile(e.target.files?.[0] || null)} className="text-xs" />
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm p-5 space-y-3">
+            <h3 className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 text-sm"><Upload className="w-4 h-4 text-slate-500 dark:text-slate-400" />Restore from a Backup File</h3>
+            <p className="text-xs text-slate-600 dark:text-slate-300">Choose a <span className="font-mono">.db</span> backup file (for example from a USB drive or another computer). It is integrity-checked before anything changes, and the current data is backed up first.</p>
+            <input type="file" accept=".db,.sqlite,.sqlite3,.bak" onChange={(e) => setRestoreFile(e.target.files?.[0] || null)} className="text-xs text-slate-500 dark:text-slate-400 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 dark:file:bg-slate-800 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-700 dark:file:text-slate-200 hover:file:bg-slate-200 dark:hover:file:bg-slate-700" />
             <button onClick={handleRestoreFromFile} disabled={!restoreFile || restoring} className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50">Restore from file</button>
           </div>
         </div>
       )}
 
       {/* Backups Table */}
-      <div className="bg-white rounded-2xl border border-gray-200/80 shadow-sm overflow-hidden">
-        <div className="p-5 border-b border-gray-100 flex items-center justify-between">
-          <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm">
-            <Clock className="w-4 h-4 text-gray-500" />
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+          <h3 className="font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2 text-sm">
+            <Clock className="w-4 h-4 text-slate-500 dark:text-slate-400" />
             Backup History ({backups.length})
           </h3>
           <button
             onClick={fetchBackups}
-            className="text-xs text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1"
+            className="text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 font-medium flex items-center gap-1"
           >
             <RefreshCw className="w-3.5 h-3.5" /> Refresh List
           </button>
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm text-gray-600">
-            <thead className="bg-gray-50/75 text-gray-700 font-semibold text-xs border-b border-gray-100">
+          <table className="w-full text-left text-sm text-slate-600 dark:text-slate-300">
+            <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-700 dark:text-slate-200 font-semibold text-xs border-b border-slate-100 dark:border-slate-800">
               <tr>
                 <th className="py-3 px-4">Backup</th>
                 <th className="py-3 px-4">Type / Status</th>
@@ -275,47 +275,47 @@ export const BackupPage: React.FC = () => {
                 <th className="py-3 px-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-gray-400">Loading snapshots...</td>
+                  <td colSpan={5} className="py-8 text-center text-slate-400 dark:text-slate-500">Loading snapshots...</td>
                 </tr>
               ) : backups.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-gray-400">
+                  <td colSpan={5} className="py-8 text-center text-slate-400 dark:text-slate-500">
                     No snapshots created yet. Click "Create Snapshot" above to take your first backup!
                   </td>
                 </tr>
               ) : (
                 backups.map((b) => (
-                  <tr key={b.id} className="hover:bg-gray-50/50">
-                    <td className="py-3.5 px-4 font-medium text-gray-900 flex items-center gap-2">
-                      <Database className="w-4 h-4 text-indigo-500 shrink-0" />
+                  <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                    <td className="py-3.5 px-4 font-medium text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                      <Database className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
                       <span>
                         {b.backup_name}
-                        <span className="block text-[10px] font-mono text-gray-400 break-all">{b.file_path}</span>
+                        <span className="block text-[10px] font-mono text-slate-400 dark:text-slate-500 break-all">{b.file_path}</span>
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-xs">
-                      <span className="font-semibold text-gray-700">{b.kind?.replace('_', ' ')}</span>{' '}
-                      <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${b.status === 'VERIFIED' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>{b.status}</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-200">{b.kind?.replace('_', ' ')}</span>{' '}
+                      <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${b.status === 'VERIFIED' ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : 'bg-rose-100 dark:bg-rose-500/15 text-rose-700 dark:text-rose-300'}`}>{b.status}</span>
                     </td>
-                    <td className="py-3.5 px-4 text-xs text-gray-500">
+                    <td className="py-3.5 px-4 text-xs text-slate-500 dark:text-slate-400">
                       {b.file_size_kb} KB
                     </td>
-                    <td className="py-3.5 px-4 text-xs text-gray-500">
+                    <td className="py-3.5 px-4 text-xs text-slate-500 dark:text-slate-400">
                       {new Date(b.created_at.endsWith('Z') ? b.created_at : b.created_at + 'Z').toLocaleString('en-IN')}
                     </td>
                     <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                      <button onClick={() => handleVerify(b)} className="text-xs font-semibold text-gray-600 hover:text-gray-900 px-2 py-1.5">Verify</button>
-                      <button onClick={() => handleDelete(b)} className="text-gray-400 hover:text-rose-600 px-2 py-1.5" title="Delete backup file"><Trash2 className="w-3.5 h-3.5 inline" /></button>
+                      <button onClick={() => handleVerify(b)} className="text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white px-2 py-1.5">Verify</button>
+                      <button onClick={() => handleDelete(b)} className="text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 px-2 py-1.5" aria-label="Delete backup file"><Trash2 className="w-3.5 h-3.5 inline" /></button>
                       <button
                         disabled={b.status === 'MISSING' || b.status === 'FAILED'}
                         onClick={() => {
                           setSelectedBackupToRestore(b);
                           setRestoreModalOpen(true);
                         }}
-                        className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition"
+                        className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-200 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg transition"
                       >
                         Restore
                       </button>
@@ -331,18 +331,18 @@ export const BackupPage: React.FC = () => {
       {/* Restore Confirmation Modal */}
       {restoreModalOpen && selectedBackupToRestore && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-4">
-            <div className="flex items-center gap-3 text-amber-600">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 max-w-md w-full p-6 shadow-xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-600 dark:text-amber-400">
               <AlertTriangle className="w-6 h-6 flex-shrink-0" />
-              <h3 className="text-lg font-bold text-gray-900">Confirm Database Restore</h3>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Confirm Database Restore</h3>
             </div>
 
-            <p className="text-sm text-gray-600 leading-relaxed">
-              Are you sure you want to restore to snapshot: <strong className="text-gray-900">{selectedBackupToRestore.backup_name}</strong>?
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              Are you sure you want to restore to snapshot: <strong className="text-slate-900 dark:text-slate-100">{selectedBackupToRestore.backup_name}</strong>?
               All business data is replaced in a single transaction. A safety backup of the current data is created first, so this can be undone.
             </p>
 
-            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
+            <div className="p-3 bg-amber-50 dark:bg-amber-500/10 rounded-xl border border-amber-200 dark:border-amber-500/30 text-xs text-amber-800 dark:text-amber-200">
               Backup taken: {new Date(selectedBackupToRestore.created_at + 'Z').toLocaleString('en-IN')}
             </div>
 
@@ -350,7 +350,7 @@ export const BackupPage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setRestoreModalOpen(false)}
-                className="px-4 py-2 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
               >
                 Cancel
               </button>
@@ -358,7 +358,7 @@ export const BackupPage: React.FC = () => {
                 type="button"
                 disabled={restoring}
                 onClick={handleConfirmRestore}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-xl text-sm font-medium shadow-sm transition disabled:opacity-50"
+                className="flex items-center gap-2 btn-brand px-5 py-2 rounded-xl text-sm font-medium shadow-sm transition disabled:opacity-50"
               >
                 {restoring && <RefreshCw className="w-4 h-4 animate-spin" />}
                 Confirm & Restore

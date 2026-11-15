@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowLeft, Copy, Plus, Trash2 } from 'lucide-react';
 import { del, get, post, put, qs } from '../api';
 import { useApp } from '../App';
 import { Alert, Badge, Button, Card, Field, Input, Modal, PageHeader, Select, Table, Textarea, daysLeft, fmtAgo, fmtDate, fmtINR, useAction, useAsync } from '../components/ui';
+import { DeleteDeviceButton, deviceStatusCell } from '../components/DeviceControls';
 import { FeatureMatrix } from '../components/FeatureMatrix';
 import { promptDialog } from '../components/dialogs';
 
@@ -75,6 +76,20 @@ const PRESETS: Record<string, { title: string; subtitle: string; query: Record<s
   expired: { title: 'Expired Licenses', subtitle: 'Past their end date — renew or convert', query: { status: 'EXPIRED' } },
 };
 
+/** Where the licence's computers stand: in use, signed out, uninstalled */
+function DeviceCounts({ installations }: { installations: any[] }) {
+  const uninstalled = installations.filter((i) => i.uninstalled_at).length;
+  const signedOut = installations.filter((i) => i.status === 'DEACTIVATED' && !i.uninstalled_at).length;
+  const inUse = installations.length - uninstalled - signedOut;
+  return (
+    <div className="text-slate-500 dark:text-slate-400">
+      Installed and in use now: <b className="text-slate-800 dark:text-slate-100">{inUse}</b>
+      {signedOut > 0 && <> · signed out {signedOut}</>}
+      {uninstalled > 0 && <> · uninstalled {uninstalled}</>}
+    </div>
+  );
+}
+
 export function LicensesPage({ preset }: { preset: keyof typeof PRESETS }) {
   const { nav, can } = useApp();
   const p = PRESETS[preset];
@@ -146,9 +161,13 @@ export function LicensesPage({ preset }: { preset: keyof typeof PRESETS }) {
   );
 }
 
+/** The licence list a licence appears in, as in the menu */
+const listOf = (l: any) => (l.status === 'SUSPENDED' ? 'suspended' : l.status === 'EXPIRED' ? 'expired' : l.type === 'TRIAL' ? 'trials' : 'paid');
+
 export function LicenseDetail({ id }: { id: string }) {
-  const { nav, can } = useApp();
+  const { nav, can, setLicenseList } = useApp();
   const { data, error, reload } = useAsync(() => get(`/licenses/${id}`), [id]);
+  useEffect(() => { if (data?.license) setLicenseList(id, listOf(data.license)); }, [id, data?.license]);
   const plans = useAsync(() => get('/plans'), []);
   const { busy, msg, run } = useAction();
   const [dialog, setDialog] = useState<null | 'extend' | 'renew' | 'convert' | 'plan' | 'edit'>(null);
@@ -162,10 +181,32 @@ export function LicenseDetail({ id }: { id: string }) {
     if (reason !== null) act(path, { reason }, `${label} done. Applied when installations next connect.`);
   };
   const paidPlans = (plans.data?.data || []).filter((p: any) => !p.is_trial && p.is_active);
+  // Computers that still use this licence (installed and not signed out)
+  const inUse = (data?.installations || []).filter((i: any) => i.status !== 'DEACTIVATED' && !i.uninstalled_at).length;
+  const resetActivations = async () => {
+    const value = await promptDialog(
+      `${inUse} computer${inUse === 1 ? '' : 's'} use this licence right now. Set "Activations used" to that (or another number) so computers that were uninstalled, deleted or signed out no longer count.`,
+      { title: 'Reset activations used', label: 'Activations used', defaultValue: String(inUse), required: true, confirmText: 'Reset' },
+    );
+    if (value === null) return;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 0) return void run(async () => { throw new Error('Enter a whole number (0 or more).'); });
+    run(async () => { await put(`/licenses/${id}`, { activationsCount: n }); reload(); }, `Activations used set to ${n}.`);
+  };
+  const fitDeviceLimit = async () => {
+    const value = await promptDialog(
+      `${inUse} computer${inUse === 1 ? '' : 's'} use this licence right now. How many computers may use it at the same time?`,
+      { title: 'Device limit', label: 'Device limit', defaultValue: String(Math.max(1, inUse)), required: true, confirmText: 'Save' },
+    );
+    if (value === null) return;
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < 1) return void run(async () => { throw new Error('The device limit is at least 1.'); });
+    run(async () => { await put(`/licenses/${id}`, { maxDevices: n }); reload(); }, `Device limit set to ${n}.`);
+  };
 
   return (
     <div className="space-y-4">
-      <Button tone="ghost" onClick={() => nav(l?.type === 'TRIAL' ? 'trials' : 'paid')}><ArrowLeft className="w-3.5 h-3.5" />Licenses</Button>
+      <Button tone="ghost" onClick={() => nav(l ? listOf(l) : 'paid')}><ArrowLeft className="w-3.5 h-3.5" />Licenses</Button>
       <Alert>{error}</Alert>
       <Alert tone={msg?.tone}>{msg?.text}</Alert>
       {l && (
@@ -179,7 +220,7 @@ export function LicenseDetail({ id }: { id: string }) {
               {l.type === 'PAID' && can('ADMIN') && <Button tone="primary" onClick={() => { setForm({ planCode: data.plan.code }); setDialog('renew'); }}>Renew</Button>}
               {l.type === 'PAID' && can('ADMIN') && l.expires_at && <Button onClick={() => { setForm({ days: 30 }); setDialog('extend'); }}>Extend</Button>}
               {can('ADMIN') && <Button onClick={() => { setForm({ planCode: data.plan.code, resetExpiry: false }); setDialog('plan'); }}>Change plan</Button>}
-              {can('ADMIN') && <Button onClick={() => { setForm({ maxDevices: l.max_devices, maxActivations: l.max_activations ?? '', notes: l.notes || '', paymentReference: l.payment_reference || '' }); setDialog('edit'); }}>Edit limits</Button>}
+              {can('ADMIN') && <Button onClick={() => { setForm({ maxDevices: l.max_devices, maxActivations: l.max_activations ?? '', activationsCount: l.activations_count ?? 0, notes: l.notes || '', paymentReference: l.payment_reference || '' }); setDialog('edit'); }}>Edit limits</Button>}
               {can('ADMIN') && l.status === 'ACTIVE' && <Button tone="warning" onClick={() => confirmAct('suspend', 'Suspend license')}>Suspend</Button>}
               {can('ADMIN') && l.status === 'SUSPENDED' && <Button tone="primary" onClick={() => act('reactivate', {}, 'License reactivated')}>Reactivate</Button>}
               {can('ADMIN') && l.status !== 'REVOKED' && <Button tone="danger" onClick={() => confirmAct('revoke', 'Revoke license permanently')}>Revoke</Button>}
@@ -208,7 +249,24 @@ export function LicenseDetail({ id }: { id: string }) {
             </Card>
             <Card title="Devices">
               <div className="text-xs space-y-1"><div>Active: <b>{data.installations.filter((i: any) => i.status !== 'DEACTIVATED').length} / {l.max_devices}</b></div>
-                <div>Activations used: <b>{l.activations_count}{l.max_activations ? ` / ${l.max_activations}` : ''}</b></div></div>
+                <div>Activations used: <b>{l.activations_count}{l.max_activations ? ` / ${l.max_activations}` : ''}</b></div>
+                <DeviceCounts installations={data.installations} />
+                {can('ADMIN') && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <Button disabled={busy} onClick={() => void resetActivations()}>Reset activations</Button>
+                    <Button disabled={busy} onClick={() => void fitDeviceLimit()}>Set device limit</Button>
+                  </div>
+                )}
+                {data.installations.filter((i: any) => i.status !== 'DEACTIVATED').length > l.max_devices && (
+                  <div className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                    More devices are active than the limit allows. Deactivate or delete one below, or raise the limit (Edit limits).
+                  </div>
+                )}
+                {l.max_activations != null && l.activations_count >= l.max_activations && (
+                  <div className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                    All activations are used: a new computer (or a reinstall) cannot activate until you raise "Max activations" (Edit limits).
+                  </div>
+                )}</div>
             </Card>
             <Card title="Payment">
               <div className="text-xs space-y-1"><div>Amount: <b>{fmtINR(l.payment_amount_paise)}</b></div><div>Method: {l.payment_method || '—'}</div>
@@ -218,9 +276,10 @@ export function LicenseDetail({ id }: { id: string }) {
           <Card title="Installations on this license">
             <Table rows={data.installations} empty="Not activated on any device yet" onRow={(r) => nav('installations', r.id)} columns={[
               { key: 'device_name', label: 'Device' }, { key: 'os', label: 'OS' }, { key: 'app_version', label: 'Version' },
-              { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> },
+              { key: 'status', label: 'Status', render: deviceStatusCell },
               { key: 'activated_at', label: 'Activated', render: (r) => fmtDate(r.activated_at) },
               { key: 'last_verified_at', label: 'Last verified', render: (r) => fmtAgo(r.last_verified_at) },
+              { key: 'delete', label: '', render: (r) => <DeleteDeviceButton device={r} onDeleted={reload} /> },
             ]} />
           </Card>
           <Card title="Features for this license">
@@ -265,13 +324,18 @@ export function LicenseDetail({ id }: { id: string }) {
       )}
       {dialog === 'edit' && (
         <Modal title="Limits & notes" onClose={() => setDialog(null)} footer={<Button tone="primary" busy={busy} onClick={() => run(async () => {
+          const used = Number(form.activationsCount);
+          if (!Number.isInteger(used) || used < 0) throw new Error('Activations used must be a whole number (0 or more).');
           await put(`/licenses/${id}`, { maxDevices: Number(form.maxDevices), maxActivations: form.maxActivations === '' ? null : Number(form.maxActivations),
-            notes: form.notes || null, paymentReference: form.paymentReference || null });
+            activationsCount: used, notes: form.notes || null, paymentReference: form.paymentReference || null });
           setDialog(null); reload();
         }, 'Saved')}>Save</Button>}>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Device limit"><Input type="number" min={1} value={form.maxDevices} onChange={(e) => setForm({ ...form, maxDevices: e.target.value })} /></Field>
             <Field label="Activation limit" hint="Blank = unlimited"><Input type="number" min={1} value={form.maxActivations} onChange={(e) => setForm({ ...form, maxActivations: e.target.value })} /></Field>
+            <Field label="Activations used" hint={`Computers in use now: ${inUse}. Lower it after an uninstall or a deleted device.`}>
+              <Input type="number" min={0} value={form.activationsCount} onChange={(e) => setForm({ ...form, activationsCount: e.target.value })} />
+            </Field>
           </div>
           <Field label="Payment reference"><Input value={form.paymentReference} onChange={(e) => setForm({ ...form, paymentReference: e.target.value })} /></Field>
           <Field label="Notes"><Textarea rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>

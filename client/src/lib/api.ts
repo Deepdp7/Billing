@@ -12,6 +12,13 @@ export class ApiError extends Error {
   }
 }
 
+let backgroundDepth = 0;
+/** Requests started while `fn` runs (synchronously) are background reloads */
+export function inBackground(fn: () => void) {
+  backgroundDepth += 1;
+  try { fn(); } finally { setTimeout(() => { backgroundDepth -= 1; }, 0); }
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('apna_billing_token');
   const headers = new Headers(options.headers || {});
@@ -23,6 +30,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
+  // Started by a list reloading on its own (useLiveRefresh), not by the user: not counted as using the feature
+  if (backgroundDepth > 0) headers.set('X-Apna-Background', '1');
 
   const res = await fetch(`${API_BASE}${endpoint}`, {
     ...options,
@@ -32,19 +41,69 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new ApiError(data.message || `Request failed with status ${res.status}`, data.code, data.details);
+    throw new ApiError(data.message || data.error || `Request failed with status ${res.status}`, data.code, data.details);
   }
 
   return data as T;
 }
 
+// ---- Loyalty: the engine stores "₹ spent per point" and "paise per point"; the screen shows points per ₹ and ₹ per point ----
+
+function loyaltyRuleFromServer(r: any) {
+  if (!r) return r;
+  return {
+    ...r,
+    pointsPerSpendUnit: 1,
+    spendUnitAmount: Number(r.earn_points_per_rupees) || 100,
+    redemptionValuePerPoint: (Number(r.point_value_paise) || 0) / 100,
+    minPointsToRedeem: Number(r.min_redeem_points) || 0,
+    isActive: !!r.is_active,
+  };
+}
+
+function loyaltyRuleToServer(f: any) {
+  const points = Number(f.pointsPerSpendUnit) || 1;
+  return {
+    earn_points_per_rupees: (Number(f.spendUnitAmount) || 100) / points,
+    point_value_paise: Math.round((Number(f.redemptionValuePerPoint) || 0) * 100),
+    min_redeem_points: Number(f.minPointsToRedeem) || 0,
+    is_active: f.isActive ? 1 : 0,
+  };
+}
+
+function loyaltyTransactionFromServer(t: any) {
+  return {
+    ...t,
+    type: t.transaction_type,
+    customerName: t.customer_name,
+    balanceAfter: t.balance_after,
+    createdAt: t.created_at ? `${String(t.created_at).replace(' ', 'T')}Z` : undefined,
+  };
+}
+
+export interface LicenseDevices {
+  maxDevices: number | null;
+  devices: Array<{ id: string; deviceName: string; os: string; appVersion: string; status: string; lastSeenAt: string | null;
+    installedAt: string; uninstalledAt: string | null; thisComputer: boolean }>;
+}
+
+export interface ProductOptions {
+  units: { value: string; label: string; products: number }[];
+  gstRates: { rate: string; products: number }[];
+}
+
 export const api = {
   // Auth
-  login: (credentials: { email: string; password: string }) => 
-    request<{ token: string; user: any }>('/auth/login', {
+  login: (credentials: { email: string; password: string; shopId?: string; details?: { state?: string; category?: string } }) => 
+    request<{ token: string; user: any; newOnThisComputer?: boolean; licenseJoin?: { code: string; message?: string } }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(credentials),
     }),
+
+  forgotPassword: (email: string) =>
+    request<{ ok: boolean; minutes: number }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+  resetPassword: (data: { email: string; code: string; password: string }) =>
+    request<{ ok: boolean }>('/auth/reset-password', { method: 'POST', body: JSON.stringify(data) }),
 
   registerBusiness: (data: any) =>
     request<{ token: string; user: any; message: string }>('/auth/register', {
@@ -69,11 +128,12 @@ export const api = {
     request<{ ok: boolean }>('/auth/erase-shop', { method: 'POST', body: JSON.stringify({ confirmName }) }),
 
   // Products & Categories
-  getProducts: (params: { search?: string; categoryId?: string; barcode?: string; lowStockOnly?: boolean; page?: number; limit?: number } = {}) => {
+  getProducts: (params: { search?: string; categoryId?: string; barcode?: string; code?: string; lowStockOnly?: boolean; page?: number; limit?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.search) q.append('search', params.search);
     if (params.categoryId) q.append('categoryId', params.categoryId);
     if (params.barcode) q.append('barcode', params.barcode);
+    if (params.code) q.append('code', params.code);
     if (params.lowStockOnly) q.append('lowStockOnly', 'true');
     if (params.page) q.append('page', String(params.page));
     if (params.limit) q.append('limit', String(params.limit));
@@ -97,7 +157,21 @@ export const api = {
       method: 'DELETE',
     }),
 
-  getCategories: () => request<{ data: any[] }>('/app/categories'),
+  /** suggestions: categories that fit this kind of business and the shop does not have yet */
+  getCategories: () => request<{ data: any[]; suggestions?: string[] }>('/app/categories'),
+  updateCategory: (id: string, data: { name?: string; description?: string }) =>
+    request<any>(`/app/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCategory: (id: string) => request<{ message: string }>(`/app/categories/${id}`, { method: 'DELETE' }),
+  /** The shop's own units and GST rates for the product form, each with how many products use it */
+  getProductOptions: () => request<ProductOptions>('/app/products/options'),
+  saveProductOptions: (data: { units?: { value: string; label: string }[]; gstRates?: number[]; renameUnit?: { from: string; to: string } }) =>
+    request<ProductOptions>('/app/products/options', { method: 'PUT', body: JSON.stringify(data) }),
+  /** Products → Import Excel: an .xlsx or .csv file as base64 */
+  importProducts: (fileName: string, data: string) =>
+    request<{ created: number; updated: number; skipped: number; errors: { row: number; message: string }[] }>('/app/products/import', {
+      method: 'POST',
+      body: JSON.stringify({ fileName, data }),
+    }),
   createCategory: (data: { name: string; description?: string }) =>
     request<any>('/app/categories', {
       method: 'POST',
@@ -491,19 +565,20 @@ export const api = {
 
   // Phase 10: Customer Loyalty & Rewards Points (PRD §4.13)
   getLoyaltyRule: () =>
-    request<{ rule: any; stats: any }>('/app/loyalty/rule'),
+    request<{ rule: any; stats: any }>('/app/loyalty/rule').then((r) => ({ ...r, rule: loyaltyRuleFromServer(r.rule) })),
   updateLoyaltyRule: (data: any) =>
     request<{ message: string; rule: any }>('/app/loyalty/rule', {
       method: 'PUT',
-      body: JSON.stringify(data),
-    }),
+      body: JSON.stringify(loyaltyRuleToServer(data)),
+    }).then((r) => ({ ...r, rule: loyaltyRuleFromServer(r.rule) })),
   getLoyaltyTransactions: (params: { customerId?: string; search?: string } | number = {}) => {
     const q = new URLSearchParams();
     if (typeof params === 'object') {
       if (params.customerId) q.append('customerId', params.customerId);
       if (params.search) q.append('search', params.search);
     }
-    return request<{ transactions: any[] }>(`/app/loyalty/transactions?${q.toString()}`);
+    return request<{ transactions: any[] }>(`/app/loyalty/transactions?${q.toString()}`)
+      .then((r) => ({ transactions: (r.transactions || []).map(loyaltyTransactionFromServer) }));
   },
   getCustomerLoyalty: (customerId: string) =>
     request<{ customer: any; history: any[] }>(`/app/loyalty/customers/${customerId}`),
@@ -652,10 +727,15 @@ export const api = {
   startTrial: (data: { name: string; businessName: string; email: string; phone?: string }) =>
     request<any>('/license/trial', { method: 'POST', body: JSON.stringify(data) }),
   activateLicense: (licenseKey: string) => request<any>('/license/activate', { method: 'POST', body: JSON.stringify({ licenseKey }) }),
+  /** The account's password: this computer joins the licence the account already has */
+  joinAccountLicense: (password: string) => request<any>('/license/join', { method: 'POST', body: JSON.stringify({ password }) }),
   deactivateLicense: () => request<any>('/license/deactivate', { method: 'POST', body: '{}' }),
+  licenseDevices: () => request<LicenseDevices>('/license/devices'),
+  /** Whether this business's data is in step with the account's other computers */
+  getSyncStatus: () => request<any>('/sync/status'),
+  signOutDevice: (id: string) => request<LicenseDevices>(`/license/devices/${encodeURIComponent(id)}/deactivate`, { method: 'POST', body: '{}' }),
   syncLicense: () => request<any>('/license/sync', { method: 'POST', body: '{}' }),
   trackUsage: (feature: string) => request<any>('/license/usage', { method: 'POST', body: JSON.stringify({ feature }) }),
-  getLocalUsage: () => request<{ data: any[] }>('/license/usage'),
   getBusinessSettings: () => request<{ settings: any }>('/app/business/settings'),
   updateBusinessSettings: (data: any) => request<{ settings: any }>('/app/business/settings', { method: 'PUT', body: JSON.stringify(data) }),
 
@@ -685,6 +765,10 @@ export const api = {
   getCustomerLedger: (id: string) => request<any>(`/app/customers/${id}/ledger`),
   receiveCustomerPayment: (id: string, data: { amountPaise: number; mode: string; reference?: string; notes?: string }) =>
     request<any>(`/app/customers/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
+  voidCustomerPayment: (id: string, paymentId: string) =>
+    request<any>(`/app/customers/${id}/payments/${paymentId}/void`, { method: 'POST', body: '{}' }),
+  refundCustomerAdvance: (id: string, data: { amountPaise: number; mode: string; reference?: string; notes?: string }) =>
+    request<any>(`/app/customers/${id}/refund`, { method: 'POST', body: JSON.stringify(data) }),
 
   // ---------------- Expenses / suppliers / reports ----------------
   updateExpense: (id: string, data: any) => request<any>(`/app/expenses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

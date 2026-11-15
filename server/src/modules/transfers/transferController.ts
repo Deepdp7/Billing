@@ -1,6 +1,8 @@
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/connection.js';
+import { localDate } from '../../lib/dates.js';
+import { nextDocumentNumber } from '../../lib/numbering.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
 
 // ============================================================================
@@ -111,10 +113,9 @@ export function createTransfer(req: AuthenticatedRequest, res: Response): void {
     }
   }
 
-  const existingCount = db.prepare('SELECT COUNT(*) as count FROM stock_transfers WHERE business_id = ?').get(businessId) as any;
-  const transferNumber = `TRF-${1000 + (existingCount?.count || 0) + 1}`;
+  const transferNumber = nextDocumentNumber('stock_transfers', 'transfer_number', businessId, 'TRF-', 1001);
   const transferId = uuidv4();
-  const dateStr = transferDate || new Date().toISOString().split('T')[0];
+  const dateStr = transferDate || localDate();
 
   const totalQuantity = items.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0);
 

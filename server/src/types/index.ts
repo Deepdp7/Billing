@@ -196,4 +196,6 @@ export interface AuthTokenPayload {
   email: string;
   role: UserRole;
   businessId?: string | null;
+  /** The business's database file on this computer (db/shops.ts); missing in tokens from before: "main" */
+  shopId?: string;
 }

@@ -1,19 +1,52 @@
-import React, { useState, useEffect } from 'react';
-import { api, downloadFile } from '../../lib/api.js';
+import React, { useState, useEffect, useRef } from 'react';
+import { api, downloadFile, type ProductOptions } from '../../lib/api.js';
+import { CatalogListsManager, type ListTab } from './CatalogListsManager.js';
+import { domainFieldsFor } from './domainFields.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { Product, Category } from '../../types/index.js';
 import { formatINR, paiseToRupees, rupeesToPaise } from '../../lib/utils.js';
 import { 
   Package, Plus, Search, Edit2, Trash2, Barcode, 
-  Tag, AlertTriangle, X, Check, RefreshCw 
+  Tag, AlertTriangle, X, Check, RefreshCw, Upload, List, Settings2
 } from 'lucide-react';
-import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
-import { Select } from '../../components/ui/Select.js';
 
+// Units and GST rates offered until the shop's own lists load (Categories & Units); anything else can be typed ("Custom…")
+const UNITS: { value: string; label: string }[] = [
+  { value: 'pcs', label: 'Pieces (pcs)' }, { value: 'kg', label: 'Kilograms (kg)' }, { value: 'gm', label: 'Grams (gm)' },
+  { value: 'ltr', label: 'Litres (ltr)' }, { value: 'ml', label: 'Millilitres (ml)' }, { value: 'mtr', label: 'Metres (mtr)' },
+  { value: 'pkt', label: 'Packet (pkt)' }, { value: 'box', label: 'Box' }, { value: 'dozen', label: 'Dozen' }, { value: 'pair', label: 'Pair' },
+  { value: 'set', label: 'Set' }, { value: 'strip', label: 'Strip' }, { value: 'bottle', label: 'Bottle' }, { value: 'bag', label: 'Bag' },
+  { value: 'portion', label: 'Portion' }, { value: 'plate', label: 'Plate' }, { value: 'hour', label: 'Hour' }, { value: 'job', label: 'Job / Service' },
+];
+const GST_RATES = ['0', '0.25', '3', '5', '12', '18', '28'];
+const CUSTOM = '__custom';
+const NEW_CATEGORY = '__new_category';
+const SUGGESTED = '__suggested:';
+
+/** A file as base64 (for the import) */
+const fileToBase64 = (file: File) => new Promise<string>((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(file);
+});
+import { confirmDialog, promptDialog, showAlert } from '../../components/ui/dialogs.js';
+import { Select } from '../../components/ui/Select.js';
+import { findProductByCode, scanBeep, takeScanIntent, useScanner } from '../../lib/scanner.js';
+
+import { useLiveRefresh } from '../../lib/live.js';
 export const ProductsPage: React.FC = () => {
   const { user } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [options, setOptions] = useState<ProductOptions | null>(null);
+  const [manager, setManager] = useState<ListTab | null>(null);
+  const unitList = options?.units ?? UNITS;
+  const rateList = options ? options.gstRates.map((r) => r.rate) : GST_RATES;
+  const domain = domainFieldsFor(user?.businessCategory);
+  const [importing, setImporting] = useState(false);
+  const importInput = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
@@ -28,19 +61,18 @@ export const ProductsPage: React.FC = () => {
   const [barcode, setBarcode] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [unit, setUnit] = useState('pcs');
+  const [typingUnit, setTypingUnit] = useState(false);
   const [hsnCode, setHsnCode] = useState('');
   const [purchasePrice, setPurchasePrice] = useState('0');
   const [salePrice, setSalePrice] = useState('0');
   const [mrp, setMrp] = useState('0');
   const [taxRate, setTaxRate] = useState('18');
+  const [typingRate, setTypingRate] = useState(false);
   const [stockQuantity, setStockQuantity] = useState('0');
   const [lowStockThreshold, setLowStockThreshold] = useState('5');
   
-  // Vertical specific fields
-  const [batchNo, setBatchNo] = useState('');
-  const [expiryDate, setExpiryDate] = useState('');
-  const [size, setSize] = useState('');
-  const [color, setColor] = useState('');
+  // Details for this kind of business (domainFields.ts), kept in the product's extra attributes
+  const [details, setDetails] = useState<Record<string, string>>({});
 
   const [formError, setFormError] = useState('');
 
@@ -48,9 +80,11 @@ export const ProductsPage: React.FC = () => {
     loadData();
   }, [search, selectedCategory]);
 
-  const loadData = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadData(true); });
+  const loadData = async (quiet?: unknown) => {
     try {
-      setLoading(true);
+      if (quiet !== true) setLoading(true);
       const [prodRes, catRes] = await Promise.all([
         api.getProducts({
           search: search || undefined,
@@ -61,10 +95,60 @@ export const ProductsPage: React.FC = () => {
       ]);
       setProducts(prodRes.data);
       setCategories(catRes.data);
+      setSuggestions(catRes.suggestions || []);
+      api.getProductOptions().then(setOptions).catch(() => {});
     } catch (err) {
       console.error('Failed to load catalog data', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Category: an existing one, one that fits this kind of business (made on the spot), or a new name typed in
+  const chooseCategory = async (value: string) => {
+    if (value !== NEW_CATEGORY && !value.startsWith(SUGGESTED)) {
+      setCategoryId(value);
+      return;
+    }
+    const name = value === NEW_CATEGORY
+      ? (await promptDialog('Name of the new category', { title: 'New category', placeholder: 'e.g. Cold Drinks', required: true, confirmText: 'Add' }))?.trim()
+      : value.slice(SUGGESTED.length);
+    if (!name) return;
+    const existing = categories.find((c) => c.name.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      setCategoryId(existing.id);
+      return;
+    }
+    try {
+      const { category } = await api.createCategory({ name });
+      setCategories((cs) => [...cs, category].sort((a, b) => a.name.localeCompare(b.name)));
+      setSuggestions((list) => list.filter((n) => n.toLowerCase() !== name.toLowerCase()));
+      setCategoryId(category.id);
+    } catch (err: any) {
+      await showAlert(err.message || 'Could not add the category', { tone: 'error' });
+    }
+  };
+
+  // Products → Import Excel: an .xlsx or .csv with the Export's columns (Export Excel is the template)
+  const importFile = async (file: File) => {
+    if (file.size > 3_500_000) {
+      await showAlert('This file is too large. Import at most about 10,000 products at a time.', { tone: 'warning' });
+      return;
+    }
+    setImporting(true);
+    try {
+      const r = await api.importProducts(file.name, await fileToBase64(file));
+      const lines = [`${r.created} new product${r.created === 1 ? '' : 's'} added, ${r.updated} updated.`];
+      if (r.skipped) {
+        lines.push('', `${r.skipped} row${r.skipped === 1 ? '' : 's'} skipped:`, ...r.errors.slice(0, 10).map((e) => `Row ${e.row}: ${e.message}`));
+        if (r.skipped > 10) lines.push(`…and ${r.skipped - 10} more`);
+      }
+      await showAlert(lines.join('\n'), { title: 'Import finished', tone: r.skipped ? 'warning' : 'success' });
+      await loadData();
+    } catch (err: any) {
+      await showAlert(err.message || 'The file could not be imported', { title: 'Import failed', tone: 'error' });
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -75,6 +159,8 @@ export const ProductsPage: React.FC = () => {
     setBarcode('');
     setCategoryId(categories[0]?.id || '');
     setUnit(user?.businessCategory === 'RESTAURANT' ? 'portion' : 'pcs');
+    setTypingUnit(false);
+    setTypingRate(false);
     setHsnCode(user?.businessCategory === 'RESTAURANT' ? '9963' : '9988');
     setPurchasePrice('0');
     setSalePrice('0');
@@ -82,13 +168,27 @@ export const ProductsPage: React.FC = () => {
     setTaxRate(user?.businessCategory === 'RESTAURANT' ? '5' : '18');
     setStockQuantity('50');
     setLowStockThreshold('5');
-    setBatchNo('');
-    setExpiryDate('');
-    setSize('M');
-    setColor('Black');
+    setDetails(Object.fromEntries((domain?.fields || []).filter((f) => f.initial).map((f) => [f.key, f.initial!])));
     setFormError('');
     setIsModalOpen(true);
   };
+
+  // A scan: with the product form open it fills the barcode; otherwise it opens that product, or a new one with
+  // the scanned barcode already filled in
+  const onScan = async (code: string) => {
+    if (isModalOpen) { setBarcode(code); scanBeep(true); return; }
+    const found = await findProductByCode(code).catch(() => null);
+    scanBeep(!!found);
+    if (found) openEditModal(found);
+    else { openAddModal(); setBarcode(code); }
+  };
+  useScanner((code) => { void onScan(code); return true; });
+  // Opened from a scan elsewhere ("Add as new product" / "Edit product"), once the lists have loaded
+  useEffect(() => {
+    if (loading) return;
+    const intent = takeScanIntent('new-product') || takeScanIntent('edit-product');
+    if (intent) void onScan(intent.code);
+  }, [loading]);
 
   const openEditModal = (p: Product) => {
     setEditingProduct(p);
@@ -97,6 +197,8 @@ export const ProductsPage: React.FC = () => {
     setBarcode(p.barcode || '');
     setCategoryId(p.category_id || '');
     setUnit(p.unit);
+    setTypingUnit(!unitList.some((u) => u.value === p.unit));
+    setTypingRate(!rateList.includes(String(p.tax_rate)));
     setHsnCode(p.hsn_code || '');
     setPurchasePrice(String(paiseToRupees(p.purchase_price_paise)));
     setSalePrice(String(paiseToRupees(p.sale_price_paise)));
@@ -106,10 +208,7 @@ export const ProductsPage: React.FC = () => {
     setLowStockThreshold(String(p.low_stock_threshold));
     
     const extra = p.extra_attributes || {};
-    setBatchNo(extra.batch_no || '');
-    setExpiryDate(extra.expiry_date || '');
-    setSize(extra.size || '');
-    setColor(extra.color || '');
+    setDetails(Object.fromEntries((domain?.fields || []).map((f) => [f.key, extra[f.key] === undefined || extra[f.key] === null ? '' : String(extra[f.key])])));
 
     setFormError('');
     setIsModalOpen(true);
@@ -128,14 +227,22 @@ export const ProductsPage: React.FC = () => {
       setFormError('Product name and SKU are required');
       return;
     }
+    if (!unit.trim()) {
+      setFormError('Type the unit (e.g. roll, carton), or choose one from the list');
+      return;
+    }
+    const rate = Number(taxRate);
+    if (taxRate.trim() === '' || !Number.isFinite(rate) || rate < 0 || rate > 100) {
+      setFormError('GST % must be a number from 0 to 100');
+      return;
+    }
 
-    const extraAttributes: Record<string, any> = {};
-    if (user?.businessCategory === 'PHARMACY') {
-      if (batchNo) extraAttributes.batch_no = batchNo;
-      if (expiryDate) extraAttributes.expiry_date = expiryDate;
-    } else if (user?.businessCategory === 'CLOTHING') {
-      if (size) extraAttributes.size = size;
-      if (color) extraAttributes.color = color;
+    // The business type's details, on top of what the product already had (nothing else is lost); empty ones go
+    const extraAttributes: Record<string, any> = { ...(editingProduct?.extra_attributes || {}) };
+    for (const f of domain?.fields || []) {
+      const v = (details[f.key] || '').trim();
+      if (v) extraAttributes[f.key] = f.type === 'number' ? Number(v) : v;
+      else delete extraAttributes[f.key];
     }
 
     const payload = {
@@ -162,6 +269,15 @@ export const ProductsPage: React.FC = () => {
       }
       setIsModalOpen(false);
       loadData();
+      // A unit or GST rate typed in ("Custom…") joins the shop's list, so it is offered next time
+      const newUnit = unit.trim() && !unitList.some((u) => u.value.toLowerCase() === unit.trim().toLowerCase());
+      const newRate = !rateList.includes(String(Number(taxRate)));
+      if (newUnit || newRate) {
+        api.saveProductOptions({
+          units: newUnit ? [...unitList.map(({ value, label }) => ({ value, label })), { value: unit.trim(), label: unit.trim() }] : undefined,
+          gstRates: newRate ? [...rateList.map(Number), Number(taxRate)] : undefined,
+        }).then(setOptions).catch(() => {});
+      }
     } catch (err: any) {
       setFormError(err.message || 'Failed to save product');
     }
@@ -191,6 +307,24 @@ export const ProductsPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
+        <button
+          onClick={() => setManager('categories')}
+          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700"
+        >
+          <Settings2 className="w-3.5 h-3.5" />
+          Categories & Units
+        </button>
+        <input ref={importInput} type="file" accept=".xlsx,.csv" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void importFile(f); }} />
+        <button
+          onClick={() => importInput.current?.click()}
+          disabled={importing}
+          title="Add or update products from an Excel or CSV file (use Export Excel as the template)"
+          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-60"
+        >
+          {importing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+          {importing ? 'Importing…' : 'Import Excel'}
+        </button>
         <button
           onClick={() => downloadFile('/app/products/export?format=xlsx', 'products.xlsx').catch((err) => showAlert(err.message))}
           className="text-xs font-semibold px-3 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50"
@@ -256,16 +390,14 @@ export const ProductsPage: React.FC = () => {
                     <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
                       <td className="p-3.5">
                         <div className="font-bold text-slate-900 dark:text-white">{p.name}</div>
-                        {p.extra_attributes?.batch_no && (
-                          <span className="text-[10px] text-blue-500 font-mono block">
-                            Batch: {p.extra_attributes.batch_no} | Exp: {p.extra_attributes.expiry_date}
-                          </span>
-                        )}
-                        {p.extra_attributes?.size && (
-                          <span className="text-[10px] text-purple-500 block">
-                            Size: {p.extra_attributes.size} | Color: {p.extra_attributes.color}
-                          </span>
-                        )}
+                        {domain && (() => {
+                          const shown = domain.fields.filter((f) => p.extra_attributes?.[f.key] !== undefined && p.extra_attributes?.[f.key] !== '').slice(0, 3);
+                          return shown.length > 0 && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 block">
+                              {shown.map((f) => `${f.label}: ${p.extra_attributes?.[f.key]}`).join(' · ')}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="p-3.5 font-mono">
                         <div className="text-slate-700 dark:text-slate-300 font-semibold">{p.sku}</div>
@@ -387,7 +519,8 @@ export const ProductsPage: React.FC = () => {
                   </div>
                   <input
                     type="text"
-                    placeholder="e.g. 890123456789"
+                    placeholder="e.g. 890123456789 (or scan it)"
+                    data-scan-input="no-enter"
                     value={barcode}
                     onChange={(e) => setBarcode(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
@@ -400,31 +533,47 @@ export const ProductsPage: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Category</label>
                   <Select
                     value={categoryId}
-                    onChange={(e) => setCategoryId(e.target.value)}
+                    onChange={(e) => void chooseCategory(e.target.value)}
                     className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
                   >
                     {categories.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
+                    {suggestions.map((n) => (
+                      <option key={`s-${n}`} value={SUGGESTED + n}>＋ {n}</option>
+                    ))}
+                    <option value={NEW_CATEGORY}>＋ New category…</option>
                   </Select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Unit</label>
-                  <Select
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="pcs">Pieces (pcs)</option>
-                    <option value="kg">Kilograms (kg)</option>
-                    <option value="gm">Grams (gm)</option>
-                    <option value="ltr">Litres (ltr)</option>
-                    <option value="pkt">Packet (pkt)</option>
-                    <option value="strip">Strip</option>
-                    <option value="bottle">Bottle</option>
-                    <option value="portion">Portion</option>
-                  </Select>
+                  {typingUnit ? (
+                    <div className="flex gap-1">
+                      <input
+                        type="text"
+                        autoFocus
+                        maxLength={20}
+                        value={unit}
+                        onChange={(e) => setUnit(e.target.value)}
+                        placeholder="e.g. roll, carton"
+                        className="w-full min-w-0 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <button type="button" title="Choose from the list" onClick={() => { setTypingUnit(false); setUnit('pcs'); }}
+                        className="shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 px-2 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+                        <List className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <Select
+                      value={unit}
+                      onChange={(e) => { if (e.target.value === CUSTOM) { setTypingUnit(true); setUnit(''); } else setUnit(e.target.value); }}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                    >
+                      {unitList.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                      <option value={CUSTOM}>Custom… (type your own)</option>
+                    </Select>
+                  )}
                 </div>
 
                 <div>
@@ -476,17 +625,34 @@ export const ProductsPage: React.FC = () => {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">GST Tax %</label>
-                  <Select
-                    value={taxRate}
-                    onChange={(e) => setTaxRate(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="0">0% (Nil)</option>
-                    <option value="5">5%</option>
-                    <option value="12">12%</option>
-                    <option value="18">18%</option>
-                    <option value="28">28%</option>
-                  </Select>
+                  {typingRate ? (
+                    <div className="flex gap-1">
+                      <input
+                        type="number"
+                        autoFocus
+                        min={0}
+                        max={100}
+                        step="0.01"
+                        value={taxRate}
+                        onChange={(e) => setTaxRate(e.target.value)}
+                        placeholder="e.g. 1.5"
+                        className="w-full min-w-0 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                      />
+                      <button type="button" title="Choose from the list" onClick={() => { setTypingRate(false); setTaxRate('18'); }}
+                        className="shrink-0 rounded-xl border border-slate-200 dark:border-slate-700 px-2 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">
+                        <List className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <Select
+                      value={taxRate}
+                      onChange={(e) => { if (e.target.value === CUSTOM) { setTypingRate(true); setTaxRate(''); } else setTaxRate(e.target.value); }}
+                      className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500"
+                    >
+                      {rateList.map((r) => <option key={r} value={r}>{r === '0' ? '0% (Nil)' : `${r}%`}</option>)}
+                      <option value={CUSTOM}>Custom… (type a rate)</option>
+                    </Select>
+                  )}
                 </div>
               </div>
 
@@ -513,30 +679,34 @@ export const ProductsPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Industry-specific fields */}
-              {user?.businessCategory === 'PHARMACY' && (
-                <div className="p-3 bg-blue-50 dark:bg-blue-950/40 rounded-xl border border-blue-200 dark:border-blue-900 space-y-2">
-                  <span className="text-[11px] font-bold uppercase text-blue-700 dark:text-blue-300">Pharmacy Batch Details</span>
+              {/* Details for this kind of business (domainFields.ts) */}
+              {domain && (
+                <div className="p-3 rounded-xl border border-emerald-200/70 dark:border-slate-700 bg-emerald-50/50 dark:bg-slate-800/40 space-y-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">{domain.title}</span>
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] text-slate-600 dark:text-slate-300 mb-1">Batch Number</label>
-                      <input
-                        type="text"
-                        placeholder="e.g. DL-2026-X1"
-                        value={batchNo}
-                        onChange={(e) => setBatchNo(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-600 dark:text-slate-300 mb-1">Expiry Date</label>
-                      <input
-                        type="date"
-                        value={expiryDate}
-                        onChange={(e) => setExpiryDate(e.target.value)}
-                        className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white"
-                      />
-                    </div>
+                    {domain.fields.map((f) => (
+                      <div key={f.key}>
+                        <label className="block text-[11px] text-slate-600 dark:text-slate-300 mb-1">{f.label}</label>
+                        {f.type === 'select' ? (
+                          <Select
+                            value={details[f.key] || ''}
+                            onChange={(e) => setDetails({ ...details, [f.key]: e.target.value })}
+                            className="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white"
+                          >
+                            <option value="">—</option>
+                            {f.options!.map((o) => <option key={o} value={o}>{o}</option>)}
+                          </Select>
+                        ) : (
+                          <input
+                            type={f.type || 'text'}
+                            placeholder={f.placeholder}
+                            value={details[f.key] || ''}
+                            onChange={(e) => setDetails({ ...details, [f.key]: e.target.value })}
+                            className={`w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-900 dark:text-white ${f.mono ? 'font-mono' : ''}`}
+                          />
+                        )}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -561,6 +731,17 @@ export const ProductsPage: React.FC = () => {
         </div>
       )}
 
+      {manager && options && (
+        <CatalogListsManager
+          tab={manager}
+          onTab={setManager}
+          onClose={() => setManager(null)}
+          categories={categories}
+          options={options}
+          onOptions={setOptions}
+          onCategoriesChanged={loadData}
+        />
+      )}
     </div>
   );
 };

@@ -1,7 +1,10 @@
 import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/connection.js';
+import { localDate } from '../../lib/dates.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
+import { HttpError } from '../../lib/http.js';
+import { createInvoice, PAYMENT_MODES } from '../../services/invoiceService.js';
 
 // ============================================================================
 // ONLINE STOREFRONT & ORDER MANAGEMENT CONTROLLER (PRD §4.20)
@@ -101,9 +104,9 @@ export function createPublicOrder(req: Request, res: Response): void {
   const businessId = store.business_id;
 
   // Generate order number
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const dateStr = localDate().replace(/-/g, '');
   const countRow = db.prepare(`
-    SELECT COUNT(*) as count FROM online_orders WHERE business_id = ? AND date(created_at) = date('now')
+    SELECT COUNT(*) as count FROM online_orders WHERE business_id = ? AND date(created_at, 'localtime') = date('now', 'localtime')
   `).get(businessId) as { count: number };
   const seq = String((countRow?.count || 0) + 1).padStart(3, '0');
   const orderNumber = `ORD-${dateStr}-${seq}`;
@@ -388,101 +391,54 @@ export function updateOrderStatus(req: AuthenticatedRequest, res: Response): voi
   res.json({ message: `Order status updated to ${status}` });
 }
 
+/**
+ * Turn an online order into a normal bill, through the same billing engine as the POS: invoice number, GST split,
+ * stock, payment and audit all work as for any sale. The bill totals what the buyer was quoted (prices include GST),
+ * with the delivery fee as its own line. Retrying never creates a second bill.
+ */
 export function convertOrderToInvoice(req: AuthenticatedRequest, res: Response): void {
   const businessId = req.businessId!;
-  const { id } = req.params;
+  const order = db.prepare('SELECT * FROM online_orders WHERE id = ? AND business_id = ?').get(req.params.id, businessId) as any;
+  if (!order) throw new HttpError(404, 'NOT_FOUND', 'Order not found');
+  if (order.converted_invoice_id) throw new HttpError(409, 'ALREADY_CONVERTED', 'This order has already been converted to a bill');
+  if (order.status === 'CANCELLED') throw new HttpError(409, 'ORDER_CANCELLED', 'A cancelled order cannot be billed');
+  const items = db.prepare('SELECT * FROM online_order_items WHERE order_id = ? AND business_id = ?').all(order.id, businessId) as any[];
+  if (items.length === 0) throw new HttpError(400, 'NO_ITEMS', 'Order has no items');
 
-  const order = db.prepare('SELECT * FROM online_orders WHERE id = ? AND business_id = ?').get(id, businessId) as any;
-  if (!order) {
-    res.status(404).json({ error: 'Order not found' });
-    return;
+  const productExists = db.prepare('SELECT 1 FROM products WHERE id = ? AND business_id = ?');
+  const lines = items.map((it) => ({
+    productId: it.product_id && productExists.get(it.product_id, businessId) ? it.product_id : null,
+    productName: it.product_name,
+    sku: it.sku || undefined,
+    quantity: it.quantity,
+    unitPricePaise: it.unit_price_paise,
+  }));
+  if (order.delivery_fee_paise > 0) {
+    lines.push({ productId: null, productName: 'Delivery charges', sku: undefined, quantity: 1, unitPricePaise: order.delivery_fee_paise, taxRate: 0 } as any);
   }
+  const mode = String(order.payment_mode || 'COD').toUpperCase();
+  const paymentMode = (PAYMENT_MODES as readonly string[]).includes(mode) ? mode : mode === 'ONLINE' ? 'UPI' : 'CASH';
 
-  if (order.converted_invoice_id) {
-    res.status(400).json({ error: 'This order has already been converted to an invoice' });
-    return;
-  }
-
-  const items = db.prepare('SELECT * FROM online_order_items WHERE order_id = ?').all(id) as any[];
-  if (!items || items.length === 0) {
-    res.status(400).json({ error: 'Order has no items' });
-    return;
-  }
-
-  const convertTx = db.transaction(() => {
-    // 1. Get next invoice number
-    const biz = db.prepare('SELECT invoice_prefix, next_invoice_number FROM businesses WHERE id = ?').get(businessId) as any;
-    const prefix = biz?.invoice_prefix || 'INV-';
-    const num = biz?.next_invoice_number || 1001;
-    const invoiceNumber = `${prefix}${num}`;
-
-    db.prepare('UPDATE businesses SET next_invoice_number = next_invoice_number + 1 WHERE id = ?').run(businessId);
-
-    const invoiceId = uuidv4();
-
-    // 2. Insert Invoice
-    db.prepare(`
-      INSERT INTO invoices (
-        id, business_id, invoice_number, customer_name, customer_phone,
-        subtotal_paise, tax_paise, total_amount_paise, discount_paise,
-        payment_mode, payment_status, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, ?, 'PAID', ?)
-    `).run(
-      invoiceId, businessId, invoiceNumber, order.customer_name, order.customer_phone,
-      order.subtotal_paise, order.total_paise, order.payment_mode || 'COD',
-      `Auto-generated from Online Order ${order.order_number}`
-    );
-
-    // 3. Insert Invoice Items and deduct inventory stock
-    const insertInvItem = db.prepare(`
-      INSERT INTO invoice_items (id, business_id, invoice_id, product_id, product_name, quantity, unit_price_paise, tax_rate, tax_paise, total_paise)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
-    `);
-
-    const deductStock = db.prepare(`
-      UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ? AND business_id = ?
-    `);
-
-    const insertMovement = db.prepare(`
-      INSERT INTO stock_movements (id, business_id, product_id, movement_type, quantity, reference_id, notes)
-      VALUES (?, ?, ?, 'INVOICE', ?, ?, ?)
-    `);
-
-    for (const itm of items) {
-      insertInvItem.run(
-        uuidv4(), businessId, invoiceId, itm.product_id, itm.product_name,
-        itm.quantity, itm.unit_price_paise, itm.total_paise
-      );
-
-      deductStock.run(itm.quantity, itm.product_id, businessId);
-
-      insertMovement.run(
-        uuidv4(), businessId, itm.product_id, -itm.quantity, invoiceId,
-        `POS Invoice ${invoiceNumber} (Converted from Online Order ${order.order_number})`
-      );
-    }
-
-    // 4. Update online order
-    db.prepare(`
-      UPDATE online_orders SET
-        status = 'COMPLETED',
-        payment_status = 'PAID',
-        converted_invoice_id = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).run(invoiceId, id);
-
-    return { invoiceId, invoiceNumber };
-  });
-
-  try {
-    const result = convertTx();
-    res.json({
-      message: 'Online order converted to POS invoice and inventory deducted successfully!',
-      invoiceId: result.invoiceId,
-      invoiceNumber: result.invoiceNumber
+  const result = db.transaction(() => {
+    const { invoice } = createInvoice(businessId, req.user?.userId || null, {
+      customerName: order.customer_name,
+      customerPhone: order.customer_phone,
+      shippingAddress: [order.delivery_address, order.delivery_city, order.delivery_pincode].filter(Boolean).join(', ') || null,
+      items: lines,
+      pricesIncludeTax: true,
+      roundOff: false,
+      paymentMode,
+      clientRequestId: `online-order-${order.id}`,
+      notes: `Online order ${order.order_number}`,
     });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message || 'Failed to convert order to invoice' });
-  }
+    db.prepare(`UPDATE online_orders SET status = 'COMPLETED', payment_status = 'PAID', converted_invoice_id = ?, updated_at = datetime('now')
+                WHERE id = ? AND business_id = ?`).run(invoice.id, order.id, businessId);
+    return invoice;
+  })();
+
+  res.json({
+    message: `Online order ${order.order_number} billed as ${result.invoice_number}; stock updated`,
+    invoiceId: result.id,
+    invoiceNumber: result.invoice_number,
+  });
 }

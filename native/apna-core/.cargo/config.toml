@@ -1,0 +1,4 @@
+# The Windows C runtime is built into the library (like the Tauri shells and the storage module): it then loads on
+# computers without the Visual C++ Redistributable (otherwise every licence check there fails).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

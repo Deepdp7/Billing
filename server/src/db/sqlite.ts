@@ -19,7 +19,7 @@ export function databaseKey(): string | null {
 }
 
 function sqliteOptions(extra: Database.Options = {}): Database.Options {
-  const binding = loadNativeModule<object>('better_sqlite3.node');
+  const binding = loadNativeModule<object>('apna-storage.dll');
   return binding ? { ...extra, nativeBinding: binding as any } : extra;
 }
 

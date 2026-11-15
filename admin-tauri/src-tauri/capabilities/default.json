@@ -1,17 +1,22 @@
 {
   "identifier": "default",
-  "description": "Window controls for the custom title bar",
-  "windows": ["main"],
+  "description": "Window controls for the custom title bar, and the Build & Release page (Admin Panel from the local relay or the dev server) (only the commands the pages use: a smaller list starts faster)",
+  "windows": [
+    "main"
+  ],
   "remote": {
     "urls": [
-      "http://127.0.0.1:3100",
-      "http://127.0.0.1:3100/*",
+      "http://127.0.0.1:*",
+      "http://127.0.0.1:*/*",
       "http://localhost:3100",
       "http://localhost:3100/*"
     ]
   },
   "permissions": [
-    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:resources:allow-close",
+    "core:window:allow-internal-toggle-maximize",
     "core:window:allow-minimize",
     "core:window:allow-unminimize",
     "core:window:allow-maximize",
@@ -19,7 +24,18 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-is-maximized",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
+    "core:webview:allow-set-webview-zoom",
     "core:window:allow-start-dragging",
-    "core:window:allow-set-focus"
+    "core:window:allow-set-focus",
+    "allow-app-ready",
+    "allow-admin-set-theme",
+    "allow-release-info",
+    "allow-release-run",
+    "allow-release-file",
+    "allow-release-answer",
+    "allow-release-stop",
+    "allow-release-open"
   ]
 }

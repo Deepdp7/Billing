@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed": "tsx src/db/seed.ts",
-    "test": "node --import tsx --test test/calculator.test.ts test/billing.test.ts test/database.test.ts test/licensing.test.ts test/erase.test.ts test/encryption.test.ts"
+    "check:sql": "tsx scripts/check-sql.mts",
+    "test": "node --import tsx --test test/calculator.test.ts test/billing.test.ts test/money.test.ts test/database.test.ts test/licensing.test.ts test/erase.test.ts test/encryption.test.ts test/businesses.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

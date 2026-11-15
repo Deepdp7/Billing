@@ -8,14 +8,30 @@ import {
   CheckCircle, AlertCircle, RefreshCw, IndianRupee, Copy, Download, FileCheck2, Trash2
 } from 'lucide-react';
 import { confirmDialog } from '../../components/ui/dialogs.js';
+import { findProductByCode, scanBeep, takeScanIntent, useScanner } from '../../lib/scanner.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const InvoicesPage: React.FC = () => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+
+  // A scanned bill number (printed as a barcode on every bill) opens that bill; any other code searches the list
+  const openScannedBill = async (code: string) => {
+    const match = (await api.getInvoices({ search: code, limit: 5 }).catch(() => null))?.data
+      ?.find((i: any) => String(i.invoice_number).toLowerCase() === code.toLowerCase());
+    scanBeep(!!match);
+    if (match) setSelectedInvoice((await api.getInvoiceById(match.id)).invoice);
+    else setSearch(code);
+  };
+  useScanner((code) => { void openScannedBill(code); return true; });
+  useEffect(() => {
+    const intent = takeScanIntent('open-bill');
+    if (intent) void openScannedBill(intent.code);
+  }, []);
   const [actionMsg, setActionMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [paymentStatus, setPaymentStatus] = useState('');
@@ -40,9 +56,11 @@ export const InvoicesPage: React.FC = () => {
     setTimeout(() => setActionMsg(''), 4000);
   };
 
-  const loadInvoices = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadInvoices(true); });
+  const loadInvoices = async (quiet?: unknown) => {
     try {
-      setLoading(true);
+      if (quiet !== true) setLoading(true);
       const res = await api.searchInvoices({
         search: search || undefined,
         status: statusFilter || undefined,
@@ -370,17 +388,17 @@ export const InvoicesPage: React.FC = () => {
           <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 w-full max-w-sm space-y-3 shadow-2xl">
             <h3 className="font-bold text-sm">Delete bill {cancelling.invoice_number}?</h3>
             <p className="text-xs text-slate-500">Stock is restored, payments are reversed, and the bill is removed from history. This cannot be undone.</p>
-            <textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={2} className={`${inputCls} w-full`} placeholder="Reason for deletion (required)" />
+            <textarea value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} rows={2} className={`${inputCls} w-full`} placeholder="Reason for deletion (optional)" />
             {cancelling.amount_paid_paise > 0 && (
               <Select value={refundMode} onChange={(e) => setRefundMode(e.target.value)} className={`${inputCls} w-full`}>
                 <option value="">Refund {formatINR(cancelling.amount_paid_paise)} via original mode</option>
                 {['CASH', 'UPI', 'CARD', 'BANK_TRANSFER'].map((m) => <option key={m} value={m}>Refund via {m.replace('_', ' ')}</option>)}
-                {cancelling.customer_id && <option value="CUSTOMER_CREDIT">Keep as customer credit (advance)</option>}
+                {cancelling.customer_id && <option value="CUSTOMER_CREDIT">Don't refund now (keep as customer's advance)</option>}
               </Select>
             )}
             <div className="flex justify-end gap-2 pt-1">
               <button onClick={() => setCancelling(null)} className="text-xs px-3 py-1.5 rounded-lg border border-slate-300">Keep bill</button>
-              <button disabled={busy || cancelReason.trim().length < 3} onClick={confirmCancel} className="text-xs px-3 py-1.5 rounded-lg bg-red-600 text-white font-semibold disabled:opacity-50">Delete bill</button>
+              <button disabled={busy} onClick={confirmCancel} className="text-xs px-3 py-1.5 rounded-lg bg-red-600 text-white font-semibold disabled:opacity-50">Delete bill</button>
             </div>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/connection.js';
+import { localDate } from '../../lib/dates.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
 
 // ============================================================================
@@ -264,9 +265,9 @@ export function createFeeReceipt(req: AuthenticatedRequest, res: Response): void
   }
 
   const paymentAmount = Number(amount_paise);
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const dateStr = localDate().replace(/-/g, '');
   const countRow = db.prepare(`
-    SELECT COUNT(*) as count FROM fee_receipts WHERE business_id = ? AND date(created_at) = date('now')
+    SELECT COUNT(*) as count FROM fee_receipts WHERE business_id = ? AND date(created_at, 'localtime') = date('now', 'localtime')
   `).get(businessId) as { count: number };
   const seq = String((countRow?.count || 0) + 1).padStart(3, '0');
   const receiptNumber = `FEE-${dateStr}-${seq}`;

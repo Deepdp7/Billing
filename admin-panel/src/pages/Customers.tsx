@@ -5,6 +5,8 @@ import { useApp } from '../App';
 import { Alert, Badge, Button, Card, Field, Input, Modal, PageHeader, Table, Textarea, fmtAgo, fmtDate, useAction, useAsync } from '../components/ui';
 import { FeatureMatrix } from '../components/FeatureMatrix';
 import { CreateLicenseModal, licenseStatusCell } from './Licenses';
+import { AppSignInCard } from './AppSignIn';
+import { DeleteDeviceButton, deviceStatusCell } from '../components/DeviceControls';
 
 function CustomerForm({ initial, onSaved, onClose }: { initial?: any; onSaved: (c: any) => void; onClose: () => void }) {
   const [f, setF] = useState({ name: initial?.name || '', businessName: initial?.business_name || '', email: initial?.email || '', phone: initial?.phone || '', notes: initial?.notes || '' });
@@ -33,10 +35,13 @@ function DeleteCustomerModal({ data, onClose, onDeleted }: { data: any; onClose:
   const expected = String(c.business_name || c.name).trim();
   const [typed, setTyped] = useState('');
   const [reason, setReason] = useState('');
+  // Computers still using a licence: deleting erases the shop on them too, which must be confirmed
+  const active = (data.installations || []).filter((i: any) => i.status !== 'DEACTIVATED' && !i.uninstalled_at);
+  const [erase, setErase] = useState(false);
   const { busy, msg, run } = useAction();
-  const matches = typed.trim().toLowerCase() === expected.toLowerCase();
+  const matches = typed.trim().toLowerCase() === expected.toLowerCase() && (active.length === 0 || erase);
   const remove = () => run(async () => {
-    await del(`/customers/${c.id}`, { confirmName: typed, reason: reason || undefined });
+    await del(`/customers/${c.id}`, { confirmName: typed, reason: reason || undefined, eraseDevices: erase });
     onDeleted();
   });
   return (
@@ -44,14 +49,24 @@ function DeleteCustomerModal({ data, onClose, onDeleted }: { data: any; onClose:
       footer={<><Button onClick={onClose}>Cancel</Button><Button tone="danger" busy={busy} disabled={!matches} onClick={remove}><Trash2 className="w-3.5 h-3.5" />Delete permanently</Button></>}>
       <Alert tone={msg?.tone}>{msg?.text}</Alert>
       <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-        This removes <b>{expected}</b> and everything linked to them from the license server: {data.licenses?.length || 0} license(s),{' '}
-        {data.installations?.length || 0} installation(s), usage history and feature permissions. It cannot be undone. The audit log keeps a record.
+        This removes <b>{expected}</b> and everything linked to them: {data.licenses?.length || 0} license(s),{' '}
+        {data.installations?.length || 0} installation(s), the shop's synced data (products, bills, customers, stock, staff), usage history
+        and feature permissions. It cannot be undone. The audit log keeps a record.
       </p>
       <ul className="text-[11px] text-slate-500 list-disc pl-4 space-y-0.5">
-        <li>Devices that can still use a license block the delete — revoke/suspend the license or deactivate those devices first.</li>
-        <li>The customer's own billing data on their computer is not touched.</li>
+        <li>Each of their computers erases the shop: at once if it is open, otherwise the next time it connects. A safety backup is saved
+          first in that computer's backup folder.</li>
+        <li>Signing in with this email no longer works: they set the business up again with Sign Up (a fresh, empty shop).</li>
         <li>Their email and computer will be able to start a new free trial again.</li>
       </ul>
+      {active.length > 0 && (
+        <label className="flex items-start gap-2 rounded-lg border border-rose-300/60 bg-rose-50 p-2.5 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-200">
+          <input type="checkbox" className="mt-0.5" checked={erase} onChange={(e) => setErase(e.target.checked)} />
+          <span>
+            Erase the shop on its computers too — {active.length} still use a licence ({active.map((i: any) => i.device_name || 'computer').join(', ')}).
+          </span>
+        </label>
+      )}
       <Field label={`Type "${expected}" to confirm`}><Input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus /></Field>
       <Field label="Reason (recorded in audit log)"><Input value={reason} placeholder="Optional" onChange={(e) => setReason(e.target.value)} /></Field>
     </Modal>
@@ -106,6 +121,7 @@ export function CustomerDetail({ id }: { id: string }) {
             <Button tone="primary" onClick={() => setNewLicense(true)}><Plus className="w-3.5 h-3.5" />Issue license</Button>
           </>} />
       )}
+      {c && <AppSignInCard customerId={c.id} account={data?.account} fallbackEmail={c.email} onChanged={reload} />}
       {c?.notes && <Card title="Notes"><p className="text-xs whitespace-pre-wrap text-slate-600 dark:text-slate-300">{c.notes}</p></Card>}
       <Card title="Licenses">
         <Table rows={data?.licenses} empty="No licenses" onRow={(r) => nav('licenses', r.id)} columns={[
@@ -120,8 +136,9 @@ export function CustomerDetail({ id }: { id: string }) {
       <Card title="Installations">
         <Table rows={data?.installations} empty="Not installed anywhere yet" onRow={(r) => nav('installations', r.id)} columns={[
           { key: 'device_name', label: 'Device' }, { key: 'os', label: 'OS' }, { key: 'app_version', label: 'Version' },
-          { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> },
+          { key: 'status', label: 'Status', render: deviceStatusCell },
           { key: 'last_seen_at', label: 'Last seen', render: (r) => fmtAgo(r.last_seen_at) },
+          { key: 'delete', label: '', render: (r) => <DeleteDeviceButton device={r} onDeleted={reload} /> },
         ]} />
       </Card>
       <Card title="Feature usage (all devices)">

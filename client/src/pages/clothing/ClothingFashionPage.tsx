@@ -10,6 +10,7 @@ import {
 import { showAlert } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const ClothingFashionPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'matrix' | 'exchanges'>('matrix');
   const [products, setProducts] = useState<ClothingProduct[]>([]);
@@ -60,8 +61,10 @@ export const ClothingFashionPage: React.FC = () => {
     loadData();
   }, []);
 
-  const loadData = async () => {
-    setLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadData(true); });
+  const loadData = async (quiet?: unknown) => {
+    if (quiet !== true) setLoading(true);
     try {
       const [prodRes, exchRes, sumRes] = await Promise.all([
         api.getClothingProducts(),

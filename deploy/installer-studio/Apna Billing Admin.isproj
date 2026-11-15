@@ -1,0 +1,28 @@
+{
+  "appName": "Apna Billing Admin",
+  "version": "1.1.0",
+  "publisher": "Apna Billing",
+  "website": "https://72.61.231.155:7443",
+  "description": "Manage Apna Billing customers, licences, features and app updates",
+  "appId": "1075172b-a29e-47fc-ad90-cf769f75d15a",
+  "sourceDir": "C:\\Users\\ARITRA\\Desktop\\Billing\\releases\\ApnaBillingAdmin-files",
+  "mainExe": "Apna Billing Admin.exe",
+  "extraFiles": [],
+  "icon": "C:\\Users\\ARITRA\\Desktop\\Billing\\branding\\installer\\apna-billing-admin\\installer-icon.ico",
+  "sidebarImage": "C:\\Users\\ARITRA\\Desktop\\Billing\\branding\\installer\\apna-billing-admin\\sidebar-492x942.bmp",
+  "headerImage": "C:\\Users\\ARITRA\\Desktop\\Billing\\branding\\installer\\apna-billing-admin\\header-450x171.bmp",
+  "licenseFile": "",
+  "scope": "perUser",
+  "desktopShortcut": true,
+  "startMenuShortcut": true,
+  "runAfterInstall": true,
+  "closeProcesses": [
+    "Apna Billing Admin.exe",
+    "apna-billing-admin.exe"
+  ],
+  "compression": "smallest",
+  "outputDir": "C:\\Users\\ARITRA\\Desktop\\Billing\\releases",
+  "outputName": "ApnaBillingAdmin-1.1.0-setup",
+  "replacesUninstallKey": "Apna Billing Admin",
+  "protectFiles": false
+}

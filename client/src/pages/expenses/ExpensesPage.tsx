@@ -8,6 +8,7 @@ import {
 import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 const EXPENSE_CATEGORIES = [
   'Store Rent',
   'Electricity & Utilities',
@@ -37,7 +38,9 @@ export const ExpensesPage: React.FC = () => {
     loadExpenses();
   }, [selectedCategory]);
 
-  const loadExpenses = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadExpenses(true); });
+  const loadExpenses = async (quiet?: unknown) => {
     try {
       const res = await api.getExpenses({ category: selectedCategory || undefined });
       setExpenses(res.data);

@@ -7,8 +7,10 @@ import {
   Building2, X, PlusCircle, Trash2 
 } from 'lucide-react';
 import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
+import { findProductByCode, scanBeep, useScanner } from '../../lib/scanner.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const PurchasesPage: React.FC = () => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [purchases, setPurchases] = useState<any[]>([]);
@@ -36,7 +38,9 @@ export const PurchasesPage: React.FC = () => {
     loadData();
   }, []);
 
-  const loadData = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadData(true); });
+  const loadData = async (quiet?: unknown) => {
     try {
       const [supRes, purRes, prodRes] = await Promise.all([
         api.getSuppliers(),
@@ -87,6 +91,18 @@ export const PurchasesPage: React.FC = () => {
       },
     ]);
   };
+
+  // A scan adds that product to the purchase bill (opening the bill form if needed)
+  useScanner((code) => {
+    void (async () => {
+      const prod = await findProductByCode(code).catch(() => null);
+      scanBeep(!!prod);
+      if (!prod) { showAlert(`No product has the code ${code}. Add it in Products first.`); return; }
+      setIsPurchaseModalOpen(true);
+      addItemToPurchase(prod);
+    })();
+    return true;
+  });
 
   const handleRecordPurchase = async (e: React.FormEvent) => {
     e.preventDefault();

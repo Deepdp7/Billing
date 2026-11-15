@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { Pill, AlertTriangle, Calendar, ShieldAlert, CheckCircle, Search } from 'lucide-react';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const PharmacyPage: React.FC = () => {
   const [batches, setBatches] = useState<any[]>([]);
   const [search, setSearch] = useState('');
@@ -10,7 +11,9 @@ export const PharmacyPage: React.FC = () => {
     loadExpiry();
   }, []);
 
-  const loadExpiry = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadExpiry(true); });
+  const loadExpiry = async (quiet?: unknown) => {
     try {
       const res = await api.getPharmacyExpiry();
       setBatches(res.data);

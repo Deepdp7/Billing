@@ -22,7 +22,7 @@ interface RegisterPageProps {
   onNavigateToLogin: () => void;
 }
 
-const CATEGORIES: Array<{
+export const CATEGORIES: Array<{
   id: BusinessCategory;
   title: string;
   desc: string;
@@ -46,7 +46,7 @@ const GST_STATES: Record<string, string> = {
   '31': 'Lakshadweep', '32': 'Kerala', '33': 'Tamil Nadu', '34': 'Puducherry', '35': 'Andaman and Nicobar Islands', '36': 'Telangana',
   '37': 'Andhra Pradesh', '38': 'Ladakh',
 };
-const STATE_NAMES = Object.values(GST_STATES).sort();
+export const STATE_NAMES = Object.values(GST_STATES).sort();
 
 export const RegisterPage: React.FC<RegisterPageProps> = ({ account, onNavigateToLogin }) => {
   const { register, isLoading } = useAuth();

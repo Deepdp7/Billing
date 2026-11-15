@@ -18,6 +18,8 @@ export type BusinessCategory =
   | 'SCHOOL';
 
 export interface User {
+  /** The business's database file on this computer (several businesses can be on one computer) */
+  shopId?: string;
   id: string;
   name: string;
   email: string;

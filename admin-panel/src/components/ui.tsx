@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Select as ModernSelect, type SelectProps } from './Select';
+import { startGet } from '../api';
 
 export const cx = (...c: Array<string | false | null | undefined>) => c.filter(Boolean).join(' ');
 
@@ -32,15 +33,28 @@ export function daysLeft(iso?: string | null) {
 
 /** Load data, exposing loading/error/reload. Live admin events refresh the data without flashing the page. */
 export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = [], opts?: { live?: boolean }) {
-  const [data, setData] = useState<T | null>(null);
+  // The first load starts while the page is drawn, which shows the last answer from the same address meanwhile
+  // (api.ts startGet): a page opened again, or loaded ahead after sign-in, appears with its data at once.
+  const first = useRef<{ promise: Promise<T>; cached: T | undefined } | null>(null);
+  const [data, setData] = useState<T | null>(() => {
+    first.current = startGet(fn);
+    return first.current.cached ?? null;
+  });
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => first.current?.cached === undefined);
   const live = opts?.live !== false;
   const load = useCallback(async (silent = false) => {
+    let started = first.current;
+    first.current = null;
+    if (!started) {
+      started = startGet(fn);
+      if (started.cached !== undefined) setData(started.cached);
+    }
+    if (started.cached !== undefined) silent = true;
     if (!silent) setLoading(true);
     setError('');
     try {
-      setData(await fn());
+      setData(await started.promise);
     } catch (e: any) {
       setError(e.message || 'Failed to load');
     } finally {
@@ -118,6 +132,7 @@ const BADGE: Record<string, string> = {
   SUSPENDED: chip('bg-amber-50 text-amber-700 border-amber-200', 'dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-500/30'),
   EXPIRED: chip('bg-rose-50 text-rose-700 border-rose-200', 'dark:bg-rose-500/15 dark:text-rose-300 dark:border-rose-500/30'),
   REVOKED: chip('bg-slate-800 text-white border-slate-800', 'dark:bg-slate-700 dark:text-slate-100 dark:border-slate-600'),
+  UNINSTALLED: chip('bg-rose-50 text-rose-700 border-rose-200', 'dark:bg-rose-500/10 dark:text-rose-300 dark:border-rose-500/30'),
   DEACTIVATED: chip('bg-slate-100 text-slate-500 border-slate-200', 'dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'),
   DISABLED: chip('bg-slate-100 text-slate-500 border-slate-200', 'dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'),
   INFO: chip('bg-sky-50 text-sky-700 border-sky-200', 'dark:bg-sky-500/15 dark:text-sky-300 dark:border-sky-500/30'),

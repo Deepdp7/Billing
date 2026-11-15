@@ -149,3 +149,39 @@ test('required / optional, pause / resume, and only newer versions can be publis
   const actions = (await call('GET', '/api/admin/v1/audit-logs')).data.data.map((a: any) => a.action);
   for (const a of ['APP_RELEASE_UPLOADED', 'APP_RELEASE_PUBLISHED', 'APP_RELEASE_REQUIRED', 'APP_RELEASE_PAUSED', 'APP_RELEASE_DELETED']) assert.ok(actions.includes(a), a);
 });
+
+test('rolling back puts an older version live on purpose, and the next newer one clears it', async () => {
+  let page = (await call('GET', '/api/admin/v1/app-updates')).data;
+  const previous = page.releases.find((r: any) => r.version === '1.2.0');
+  // Without "rollback" an older version is refused, so nothing goes back by mistake
+  assert.equal((await call('POST', `/api/admin/v1/app-updates/${previous.id}/publish`, { password: 'correct horse battery' })).data.code, 'NOT_NEWER');
+
+  const back = await call('POST', `/api/admin/v1/app-updates/${previous.id}/publish`, { password: 'correct horse battery', rollback: true });
+  assert.equal(back.status, 200);
+  assert.equal(back.data.rollback, true);
+  page = (await call('GET', '/api/admin/v1/app-updates')).data;
+  assert.equal(page.live.version, '1.2.0');
+  assert.equal(page.live.rollback, true);
+  assert.equal(page.live.required, false, 'the earlier "required" of 1.2.1 does not stick to the rollback');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(process.env.UPDATES_DIR!, 'latest.json'), 'utf8')).version, '1.2.0');
+  assert.equal(page.releases.find((r: any) => r.version === '1.2.1').status, 'SUPERSEDED');
+
+  const next = installer(6);
+  const up = await upload(next, '1.2.2', sign(next));
+  assert.equal((await call('POST', `/api/admin/v1/app-updates/${up.data.release.id}/publish`, { password: 'correct horse battery' })).status, 200);
+  page = (await call('GET', '/api/admin/v1/app-updates')).data;
+  assert.equal(page.live.version, '1.2.2');
+  assert.equal(page.live.rollback, false);
+  const actions = (await call('GET', '/api/admin/v1/audit-logs')).data.data.map((a: any) => a.action);
+  assert.ok(actions.includes('APP_RELEASE_ROLLED_BACK'));
+
+  // Another update of the same version: 1.2.2+1 is newer than 1.2.2 and publishes normally
+  const again = installer(7);
+  const up2 = await upload(again, '1.2.2+1', sign(again));
+  assert.equal(up2.status, 201, JSON.stringify(up2.data));
+  assert.equal((await call('POST', `/api/admin/v1/app-updates/${up2.data.release.id}/publish`, { password: 'correct horse battery' })).status, 200);
+  page = (await call('GET', '/api/admin/v1/app-updates')).data;
+  assert.equal(page.live.version, '1.2.2+1');
+  assert.equal(page.live.rollback, false);
+  assert.ok(fs.existsSync(path.join(process.env.UPDATES_DIR!, 'ApnaBilling-1.2.2+1-setup.exe')));
+});

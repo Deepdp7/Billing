@@ -2,11 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The slate scale (tailwind.config.js). Light: Tailwind's own slate. Dark: neutral charcoal greys, no blue cast. */
+:root {
+  --slate-50: 248 250 252; --slate-100: 241 245 249; --slate-200: 226 232 240; --slate-300: 203 213 225;
+  --slate-400: 148 163 184; --slate-500: 100 116 139; --slate-600: 71 85 105; --slate-700: 51 65 85;
+  --slate-800: 30 41 59; --slate-900: 15 23 42; --slate-950: 2 6 23;
+}
+html.dark {
+  --slate-50: 250 250 250; --slate-100: 242 242 243; --slate-200: 228 228 231; --slate-300: 209 209 214;
+  --slate-400: 161 161 168; --slate-500: 120 120 128; --slate-600: 88 88 95; --slate-700: 66 66 71;
+  --slate-800: 48 48 52; --slate-900: 36 36 39; --slate-950: 26 26 28;
+  color-scheme: dark;
+}
+
 html.tauri-shell,
 html.tauri-shell body,
 html.tauri-shell #root {
   height: 100%;
   overflow: hidden;
+}
+/* A two-finger swipe on a touchpad only scrolls up and down: the window's content never slides sideways or bounces */
+html, body, #root {
+  overflow-x: hidden;
+  overscroll-behavior: none;
 }
 html.tauri-shell .h-screen,
 html.tauri-shell .min-h-screen,
@@ -17,8 +35,46 @@ html.tauri-shell .h-dvh {
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: rgb(203 213 225); border-radius: 9999px; }
-.dark ::-webkit-scrollbar-thumb { background: rgb(51 65 85); }
+.dark ::-webkit-scrollbar-thumb { background: rgb(82 82 88); }
 
 /* Popover list used by the custom Select */
 @keyframes apna-pop { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
 .apna-pop { animation: apna-pop 120ms ease-out; }
+
+/* ---- Motion: one quiet, quick language for the whole panel (same in the billing app). Turned off when Windows is
+   set to reduce animations. */
+@keyframes ui-page { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ui-dialog { from { opacity: 0; transform: translateY(10px) scale(0.97); } to { opacity: 1; transform: none; } }
+/* A page settles in when it opens */
+.ui-page { animation: ui-page 220ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+/* Every pop-up: the backdrop fades in and the window rises softly */
+.fixed.inset-0[class*="backdrop-blur"] { animation: ui-fade 160ms ease-out backwards; }
+.fixed.inset-0[class*="backdrop-blur"]:not(.justify-end) > :first-child { animation: ui-dialog 220ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+@layer base {
+  /* Buttons and links change colour smoothly and give a small press */
+  button, a, [role="button"], summary {
+    transition-property: color, background-color, border-color, box-shadow, opacity, scale;
+    transition-duration: 150ms;
+    transition-timing-function: ease-out;
+  }
+  button:not(:disabled):active, [role="button"]:active { scale: 0.97; }
+  /* Visible focus for keyboard users only */
+  button:focus-visible, a:focus-visible, [role="button"]:focus-visible { outline: 2px solid rgb(99 102 241 / 0.7); outline-offset: 2px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+}
+
+/* Lite mode (lib/performance.ts): slower computers get no blur and no animations, so everything shows at once */
+html.lite *, html.lite ::before, html.lite ::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}
+
+/* Password boxes have their own show / hide button: hide the one the Edge engine (WebView2) adds on its own */
+input::-ms-reveal,
+input::-ms-clear { display: none; }

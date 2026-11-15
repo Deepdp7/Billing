@@ -112,7 +112,7 @@ function DialogBox({ req }: { req: Request }) {
   const cancelText = isAsk ? (req.opts as ConfirmOptions).cancelText || 'Cancel' : '';
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm"
+    <div className="fixed inset-0 z-[1500] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm"
       onMouseDown={(e) => { if (e.target === e.currentTarget && isAsk) close(false); }}>
       <form role="dialog" aria-modal="true" aria-labelledby={`dlg-${req.id}`}
         onSubmit={(e) => { e.preventDefault(); if (!(required && !value.trim())) close(true); }}
@@ -173,7 +173,7 @@ function ToastStack() {
   const list = useSyncExternalStore(subscribeToasts, toastSnapshot);
   if (!list.length) return null;
   return (
-    <div className="fixed bottom-4 right-4 z-[1050] flex flex-col gap-2 w-[min(360px,calc(100vw-2rem))]" aria-live="polite">
+    <div className="fixed bottom-4 right-4 z-[1550] flex flex-col gap-2 w-[min(360px,calc(100vw-2rem))]" aria-live="polite">
       {list.map((t) => {
         const { icon: Icon, ring } = TONES[t.tone];
         return (

@@ -88,7 +88,8 @@ export function getDashboardStats(req: AuthenticatedRequest, res: Response): voi
   });
   const paymentSummary = db.prepare(`SELECT payment_mode AS mode, SUM(CASE WHEN direction = 'IN' THEN amount_paise ELSE -amount_paise END) AS amount_paise, COUNT(*) AS count
     FROM payments WHERE business_id = ? AND status = 'ACTIVE' AND payment_date >= ? AND (invoice_id IS NOT NULL OR customer_id IS NOT NULL)
-    GROUP BY payment_mode ORDER BY amount_paise DESC`).all(biz, monthStart);
+    GROUP BY payment_mode HAVING SUM(CASE WHEN direction = 'IN' THEN amount_paise ELSE -amount_paise END) != 0
+    ORDER BY amount_paise DESC`).all(biz, monthStart);
 
   const monthGrossProfit = monthSales.net - Math.round(monthCogs.cogs);
   res.json({

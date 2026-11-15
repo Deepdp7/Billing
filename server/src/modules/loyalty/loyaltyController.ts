@@ -29,7 +29,7 @@ export function getLoyaltyRule(req: AuthenticatedRequest, res: Response): void {
       SUM(CASE WHEN transaction_type = 'REDEEMED' THEN ABS(points) ELSE 0 END) as total_points_redeemed,
       COUNT(DISTINCT customer_id) as active_loyalty_customers
     FROM loyalty_transactions
-    WHERE business_id = ?
+    WHERE business_id = ? AND customer_id IN (SELECT id FROM customers WHERE is_active = 1)
   `).get(businessId) as any;
 
   res.json({
@@ -84,7 +84,7 @@ export function getLoyaltyTransactions(req: AuthenticatedRequest, res: Response)
     FROM loyalty_transactions lt
     JOIN customers c ON c.id = lt.customer_id
     LEFT JOIN invoices i ON i.id = lt.invoice_id
-    WHERE lt.business_id = ?
+    WHERE lt.business_id = ? AND c.is_active = 1
   `;
   const params: any[] = [businessId];
 

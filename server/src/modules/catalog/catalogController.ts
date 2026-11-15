@@ -3,9 +3,11 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import { db } from '../../db/connection.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
-import { parse, HttpError } from '../../lib/http.js';
+import { parse, HttpError, asyncHandler } from '../../lib/http.js';
 import { logAudit } from '../../services/auditService.js';
 import { sendTable } from '../../services/exportService.js';
+import { mapRows, readSheet } from '../../services/productImport.js';
+import { suggestionsFor } from './categorySuggestions.js';
 
 const money = z.coerce.number().int('Amount must be in whole paise').nonnegative();
 
@@ -49,12 +51,14 @@ function withExtras(prod: any) {
 }
 
 export function getProducts(req: AuthenticatedRequest, res: Response): void {
-  const { search, categoryId, barcode, lowStockOnly } = req.query as Record<string, string>;
+  const { search, categoryId, barcode, code, lowStockOnly } = req.query as Record<string, string>;
   const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 100));
   const page = Math.max(1, Number(req.query.page) || 1);
   const conditions = ['p.business_id = ?', 'p.is_active = 1'];
   const params: any[] = [req.businessId];
   if (barcode) { conditions.push('p.barcode = ?'); params.push(barcode); }
+  // A scanned code: the product's barcode, or its SKU (stickers print the SKU when there is no barcode)
+  if (code) { conditions.push('(p.barcode = ? OR p.sku = ? COLLATE NOCASE)'); params.push(code, code); }
   if (categoryId) { conditions.push('p.category_id = ?'); params.push(categoryId); }
   if (search) {
     conditions.push('(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ? OR p.hsn_code LIKE ?)');
@@ -191,9 +195,191 @@ const categorySchema = z.object({
 export function getCategories(req: AuthenticatedRequest, res: Response): void {
   const categories = db.prepare(`
     SELECT c.*, (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.is_active = 1) AS product_count
-    FROM categories c WHERE c.business_id = ? ORDER BY c.name COLLATE NOCASE ASC`).all(req.businessId);
-  res.json({ data: categories });
+    FROM categories c WHERE c.business_id = ? ORDER BY c.name COLLATE NOCASE ASC`).all(req.businessId) as any[];
+  // Categories that fit this kind of business and the shop does not have yet (offered in the product form)
+  const business = db.prepare('SELECT category FROM businesses WHERE id = ?').get(req.businessId) as { category?: string } | undefined;
+  const have = new Set(categories.map((c) => String(c.name).toLowerCase()));
+  res.json({ data: categories, suggestions: suggestionsFor(business?.category).filter((n) => !have.has(n.toLowerCase())) });
 }
+
+// ---- Units and GST rates offered in the product form: each shop's own lists (Products → Manage lists)
+
+export const DEFAULT_UNITS: { value: string; label: string }[] = [
+  { value: 'pcs', label: 'Pieces (pcs)' }, { value: 'kg', label: 'Kilograms (kg)' }, { value: 'gm', label: 'Grams (gm)' },
+  { value: 'ltr', label: 'Litres (ltr)' }, { value: 'ml', label: 'Millilitres (ml)' }, { value: 'mtr', label: 'Metres (mtr)' },
+  { value: 'pkt', label: 'Packet (pkt)' }, { value: 'box', label: 'Box' }, { value: 'dozen', label: 'Dozen' }, { value: 'pair', label: 'Pair' },
+  { value: 'set', label: 'Set' }, { value: 'strip', label: 'Strip' }, { value: 'bottle', label: 'Bottle' }, { value: 'bag', label: 'Bag' },
+  { value: 'portion', label: 'Portion' }, { value: 'plate', label: 'Plate' }, { value: 'hour', label: 'Hour' }, { value: 'job', label: 'Job / Service' },
+];
+export const DEFAULT_GST_RATES = ['0', '0.25', '3', '5', '12', '18', '28'];
+
+function readList<T>(businessId: string, key: string, fallback: T): T {
+  const row = db.prepare('SELECT value FROM app_settings WHERE business_id = ? AND key = ?').get(businessId, key) as { value: string } | undefined;
+  if (!row) return fallback;
+  try { return JSON.parse(row.value) as T; } catch { return fallback; }
+}
+
+function writeList(businessId: string, key: string, value: unknown) {
+  db.prepare(`INSERT INTO app_settings (business_id, key, value, updated_at) VALUES (?, ?, ?, datetime('now'))
+              ON CONFLICT(business_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(businessId, key, JSON.stringify(value));
+}
+
+function productOptions(businessId: string) {
+  const units = readList(businessId, 'productUnits', DEFAULT_UNITS);
+  const rates = readList(businessId, 'gstRates', DEFAULT_GST_RATES);
+  const unitUse = new Map((db.prepare('SELECT unit, COUNT(*) AS c FROM products WHERE business_id = ? AND is_active = 1 GROUP BY unit').all(businessId) as any[])
+    .map((r) => [String(r.unit), Number(r.c)]));
+  const rateUse = new Map((db.prepare('SELECT tax_rate, COUNT(*) AS c FROM products WHERE business_id = ? AND is_active = 1 GROUP BY tax_rate').all(businessId) as any[])
+    .map((r) => [String(Number(r.tax_rate)), Number(r.c)]));
+  return {
+    units: units.map((u) => ({ ...u, products: unitUse.get(u.value) || 0 })),
+    gstRates: rates.map((r) => ({ rate: r, products: rateUse.get(r) || 0 })),
+  };
+}
+
+const optionsSchema = z.object({
+  units: z.array(z.object({ value: z.string().trim().min(1, 'A unit needs a short name').max(20), label: z.string().trim().min(1).max(40) })).max(100).optional(),
+  gstRates: z.array(z.coerce.number().min(0, 'GST is 0% or more').max(100, 'GST is at most 100%')).max(30).optional(),
+  /** A unit renamed in the list: the products that use it change with it */
+  renameUnit: z.object({ from: z.string().trim().min(1).max(20), to: z.string().trim().min(1).max(20) }).optional(),
+});
+
+export function getProductOptions(req: AuthenticatedRequest, res: Response): void {
+  res.json(productOptions(req.businessId!));
+}
+
+export function updateProductOptions(req: AuthenticatedRequest, res: Response): void {
+  const input = parse(optionsSchema, req.body);
+  const biz = req.businessId!;
+  db.transaction(() => {
+    if (input.units) {
+      const seen = new Set<string>();
+      const units = input.units.filter((u) => !seen.has(u.value.toLowerCase()) && seen.add(u.value.toLowerCase()));
+      writeList(biz, 'productUnits', units);
+    }
+    if (input.gstRates) {
+      const rates = [...new Set(input.gstRates.map((r) => String(Number(r))))].sort((a, b) => Number(a) - Number(b));
+      writeList(biz, 'gstRates', rates);
+    }
+    if (input.renameUnit && input.renameUnit.from !== input.renameUnit.to) {
+      db.prepare("UPDATE products SET unit = ?, updated_at = datetime('now') WHERE business_id = ? AND unit = ?").run(input.renameUnit.to, biz, input.renameUnit.from);
+    }
+  })();
+  res.json(productOptions(biz));
+}
+
+// ---- Products → Import Excel
+
+const importSchema = z.object({ fileName: z.string().trim().max(200), data: z.string().min(1).max(7_000_000) });
+
+/**
+ * Adds or updates products from an Excel / CSV file (the Export's columns, or common names for them). A row whose SKU
+ * exists updates that product; others become new products (a missing SKU is made up). Categories are found by name or
+ * created. Stock changes go through the stock ledger. Rows with problems are skipped and listed; the rest are saved.
+ */
+export const importProducts = asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
+  const input = parse(importSchema, req.body);
+  const biz = req.businessId!;
+  let table: string[][];
+  try {
+    table = await readSheet(Buffer.from(input.data, 'base64'));
+  } catch {
+    throw new HttpError(400, 'IMPORT_UNREADABLE', 'This file could not be read. Use an Excel file (.xlsx) or a CSV file.');
+  }
+  const { rows, missing } = mapRows(table);
+  if (missing.length) {
+    throw new HttpError(400, 'IMPORT_COLUMNS', `The file needs a header row with at least these columns: Name, ${missing.join(', ')}. Tip: use Export Excel as the template.`);
+  }
+  if (rows.length === 0) throw new HttpError(400, 'IMPORT_EMPTY', 'The file has no products under its header row.');
+  if (rows.length > 10000) throw new HttpError(400, 'IMPORT_TOO_LARGE', 'Import at most 10,000 products at a time.');
+
+  const categories = new Map<string, string>();
+  for (const c of db.prepare('SELECT id, name FROM categories WHERE business_id = ?').all(biz) as any[]) categories.set(String(c.name).toLowerCase(), c.id);
+  const categoryId = (name: string) => {
+    if (!name) return null;
+    const key = name.toLowerCase();
+    if (!categories.has(key)) {
+      const id = crypto.randomUUID();
+      db.prepare("INSERT INTO categories (id, business_id, name, description, updated_at) VALUES (?, ?, ?, '', datetime('now'))").run(id, biz, name.slice(0, 100));
+      categories.set(key, id);
+    }
+    return categories.get(key)!;
+  };
+  const number = (s: string | undefined, label: string) => {
+    if (s === undefined || s === '') return undefined;
+    const n = Number(s.replace(/[₹,%\s]/g, ''));
+    if (!Number.isFinite(n)) throw new Error(`${label} "${s}" is not a number`);
+    return n;
+  };
+  const paise = (rupees?: number) => (rupees === undefined ? undefined : Math.round(rupees * 100));
+
+  let created = 0;
+  let updated = 0;
+  const errors: { row: number; message: string }[] = [];
+  db.transaction(() => {
+    for (const { row, values: v } of rows) {
+      try {
+        if (!v.name) throw new Error('Name is empty');
+        const fields = {
+          name: v.name,
+          sku: v.sku || undefined,
+          barcode: v.barcode || undefined,
+          categoryId: v.category ? categoryId(v.category) : undefined,
+          unit: v.unit || undefined,
+          hsnCode: v.hsn ? v.hsn.replace(/\.0+$/, '') : undefined,
+          taxRate: number(v.gst, 'GST %'),
+          purchasePricePaise: paise(number(v.purchase, 'Purchase price')),
+          salePricePaise: paise(number(v.sale, 'Selling price')),
+          mrpPaise: paise(number(v.mrp, 'MRP')),
+          stockQuantity: number(v.stock, 'Stock'),
+          lowStockThreshold: number(v.low, 'Low stock level'),
+        };
+        const existing = fields.sku
+          ? db.prepare('SELECT * FROM products WHERE business_id = ? AND sku = ? AND is_active = 1').get(biz, fields.sku) as any
+          : undefined;
+        if (existing) {
+          const p = parse(productSchema.partial(), Object.fromEntries(Object.entries(fields).filter(([, x]) => x !== undefined)));
+          assertUniqueBarcode(biz, p.barcode, existing.id);
+          const pick = <T>(x: T | undefined, cur: T) => (x === undefined ? cur : x);
+          db.prepare(`UPDATE products SET category_id = ?, name = ?, barcode = ?, unit = ?, hsn_code = ?, purchase_price_paise = ?, sale_price_paise = ?,
+                        mrp_paise = ?, tax_rate = ?, low_stock_threshold = ?, updated_at = datetime('now') WHERE id = ?`)
+            .run(pick(p.categoryId, existing.category_id), pick(p.name, existing.name), pick(p.barcode, existing.barcode), pick(p.unit, existing.unit),
+              pick(p.hsnCode, existing.hsn_code), pick(p.purchasePricePaise, existing.purchase_price_paise), pick(p.salePricePaise, existing.sale_price_paise),
+              pick(p.mrpPaise, existing.mrp_paise), pick(p.taxRate, existing.tax_rate), pick(p.lowStockThreshold, existing.low_stock_threshold), existing.id);
+          if (p.stockQuantity !== undefined && p.stockQuantity !== existing.stock_quantity) {
+            db.prepare('UPDATE products SET stock_quantity = ? WHERE id = ?').run(p.stockQuantity, existing.id);
+            db.prepare(`INSERT INTO stock_movements (id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes)
+                        VALUES (?, ?, ?, ?, ?, 'MANUAL_ADJUSTMENT', 'IMPORT', 'Stock set by Excel import')`)
+              .run(crypto.randomUUID(), biz, existing.id, p.stockQuantity - existing.stock_quantity, p.stockQuantity);
+          }
+          updated++;
+        } else {
+          if (!v.sale) throw new Error('Selling price is empty');
+          const sku = fields.sku || `SKU-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+          const p = parse(productSchema, { ...Object.fromEntries(Object.entries(fields).filter(([, x]) => x !== undefined)), sku });
+          assertUniqueBarcode(biz, p.barcode);
+          const id = crypto.randomUUID();
+          db.prepare(`INSERT INTO products (id, business_id, category_id, name, sku, barcode, unit, hsn_code, purchase_price_paise, sale_price_paise, mrp_paise,
+                        tax_rate, stock_quantity, low_stock_threshold, track_stock, is_active, extra_attributes_json, created_at, updated_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, '{}', datetime('now'), datetime('now'))`)
+            .run(id, biz, p.categoryId || null, p.name, p.sku, p.barcode || null, p.unit, p.hsnCode || '', p.purchasePricePaise, p.salePricePaise,
+              p.mrpPaise, p.taxRate, p.stockQuantity, p.lowStockThreshold);
+          if (p.stockQuantity !== 0) {
+            db.prepare(`INSERT INTO stock_movements (id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes)
+                        VALUES (?, ?, ?, ?, ?, 'OPENING_STOCK', 'IMPORT', 'Opening stock (Excel import)')`).run(crypto.randomUUID(), biz, id, p.stockQuantity, p.stockQuantity);
+          }
+          created++;
+        }
+      } catch (err: any) {
+        errors.push({ row, message: err?.message || 'Could not be saved' });
+      }
+    }
+  })();
+
+  logAudit({ businessId: biz, userId: req.user?.userId, action: 'PRODUCTS_IMPORTED', entityType: 'PRODUCT',
+    details: { file: input.fileName, created, updated, skipped: errors.length } });
+  res.json({ created, updated, skipped: errors.length, errors: errors.slice(0, 50) });
+});
 
 export function createCategory(req: AuthenticatedRequest, res: Response): void {
   const c = parse(categorySchema, req.body);

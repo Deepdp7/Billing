@@ -1,0 +1,30 @@
+{
+  "appName": "Apna Billing",
+  "version": "1.0.0",
+  "publisher": "Apna Billing",
+  "website": "",
+  "description": "Billing, stock and accounts for your business",
+  "appId": "0ac02809-6b4b-4501-8217-9667e8fbdab5",
+  "sourceDir": "C:\\Users\\ARITRA\\Desktop\\Billing\\releases\\ApnaBilling-files",
+  "mainExe": "Apna Billing.exe",
+  "extraFiles": [],
+  "icon": "C:\\Users\\ARITRA\\Desktop\\Billing\\branding\\installer\\apna-billing\\installer-icon.ico",
+  "sidebarImage": "C:\\Users\\ARITRA\\Desktop\\Billing\\branding\\installer\\apna-billing\\sidebar-492x942.bmp",
+  "headerImage": "C:\\Users\\ARITRA\\Desktop\\Billing\\branding\\installer\\apna-billing\\header-450x171.bmp",
+  "licenseFile": "",
+  "scope": "perUser",
+  "desktopShortcut": true,
+  "startMenuShortcut": true,
+  "runAfterInstall": true,
+  "closeProcesses": [
+    "Apna Billing.exe",
+    "apna-billing.exe",
+    "apna-billing-engine.exe"
+  ],
+  "replacesUninstallKey": "Apna Billing",
+  "compression": "smallest",
+  "outputDir": "C:\\Users\\ARITRA\\Desktop\\Billing\\releases",
+  "outputName": "ApnaBilling-1.0.0+1-setup",
+  "protectFiles": true,
+  "uninstallArgs": "--uninstall"
+}

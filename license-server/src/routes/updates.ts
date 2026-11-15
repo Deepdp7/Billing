@@ -19,7 +19,8 @@ import { verifyUpdateSignature } from '../updateSignature.js';
  */
 
 type Guard = (req: Request, res: Response, next: NextFunction) => void;
-const VERSION = /^\d+\.\d+\.\d+$/;
+/** 1.2.3, or 1.2.3+2 for update 2 of the same version (clients still see 1.2.3) */
+const VERSION = /^\d+\.\d+\.\d+(\+\d+)?$/;
 const fileFor = (version: string) => `ApnaBilling-${version}-setup.exe`;
 const latestFile = () => path.join(config.updatesDir, 'latest.json');
 const pausedFile = () => path.join(config.updatesDir, 'latest.json.paused');
@@ -85,6 +86,7 @@ export function registerUpdateRoutes(router: Router, requireRole: (min: 'OWNER' 
         paused: !settings.latest_version && fs.existsSync(pausedFile()),
         required: !!settings.latest_version && !!settings.min_supported_version && !versionLt(settings.min_supported_version, settings.latest_version),
         minSupported: settings.min_supported_version || null,
+        rollback: !!settings.latest_version && settings.rollback === '1',
         message: settings.update_message || '',
       },
       signingKeyConfigured: !!publicKey(),
@@ -98,7 +100,7 @@ export function registerUpdateRoutes(router: Router, requireRole: (min: 'OWNER' 
   router.post('/app-updates/upload', requireRole('OWNER'), ah(async (req: any, res: Response) => {
     const version = String(req.headers['x-release-version'] || '').trim();
     const signature = String(req.headers['x-release-signature'] || '').trim();
-    if (!VERSION.test(version)) throw new HttpError(400, 'BAD_VERSION', 'Version must look like 1.2.3');
+    if (!VERSION.test(version)) throw new HttpError(400, 'BAD_VERSION', 'Version must look like 1.2.3 (or 1.2.3+2 for another update of the same version)');
     if (!signature) throw new HttpError(400, 'SIGNATURE_REQUIRED', 'Choose the .sig file that was built next to the installer');
     const key = publicKey();
     if (!key) throw new HttpError(500, 'NO_UPDATE_KEY', 'The server has no update public key yet. Run "npm run deploy:server" once from your PC.');
@@ -143,17 +145,24 @@ export function registerUpdateRoutes(router: Router, requireRole: (min: 'OWNER' 
   const confirmSchema = z.object({ password: z.string().min(1, 'Enter your password'), totp: z.string().optional() });
 
   router.post('/app-updates/:id/publish', requireRole('OWNER'), ah(async (req: any, res: Response) => {
-    const input = parse(confirmSchema.extend({ notes: z.string().trim().max(500).optional(), required: z.boolean().default(false) }), req.body);
+    // rollback: put an older version live on purpose. Every computer on another version is then offered it (and
+    // goes back to it); without it only newer versions can be published, so nothing goes back by mistake.
+    const input = parse(confirmSchema.extend({
+      notes: z.string().trim().max(500).optional(), required: z.boolean().default(false), rollback: z.boolean().default(false),
+    }), req.body);
     await confirmPassword(req, input.password, input.totp);
     const rel = await knex('app_releases').where({ id: req.params.id }).first();
     if (!rel) throw new HttpError(404, 'NOT_FOUND', 'Release not found');
     const newest = (await knex('app_releases').whereIn('status', ['PUBLISHED', 'SUPERSEDED']).whereNot({ id: rel.id }).select('version'))
       .map((r: any) => r.version).reduce((a: string, v: string) => (versionLt(a, v) ? v : a), '0.0.0');
-    if (!versionLt(newest, rel.version)) throw new HttpError(409, 'NOT_NEWER', `Apps only install versions newer than ${newest}. Build a higher version number.`);
+    const rollingBack = !versionLt(newest, rel.version);
+    if (rollingBack && !input.rollback) {
+      throw new HttpError(409, 'NOT_NEWER', `${rel.version} is not newer than ${newest}. Build a higher version number, or roll back to ${rel.version} on purpose.`);
+    }
     if (!fs.existsSync(path.join(config.updatesDir, rel.file_name))) throw new HttpError(409, 'FILE_MISSING', 'The installer file is missing on the server. Upload it again.');
 
     const notes = input.notes || rel.notes || `Apna Billing ${rel.version}`;
-    const url = `${publicBase(req)}/updates/${rel.file_name}`;
+    const url = `${publicBase(req)}/updates/${encodeURIComponent(rel.file_name)}`;
     writeAtomic(latestFile(), JSON.stringify({
       version: rel.version, notes, pub_date: nowIso().replace(/\.\d{3}Z$/, 'Z'),
       platforms: { 'windows-x86_64': { signature: rel.signature, url } },
@@ -163,11 +172,13 @@ export function registerUpdateRoutes(router: Router, requireRole: (min: 'OWNER' 
     await setSetting('update_url', url);
     await setSetting('update_message', notes);
     if (input.required) await setSetting('min_supported_version', rel.version);
+    else if (rollingBack) await setSetting('min_supported_version', '0.0.0'); // an earlier "required" must not stick to it
+    await setSetting('rollback', rollingBack ? '1' : '');
     await knex('app_releases').where({ status: 'PUBLISHED' }).update({ status: 'SUPERSEDED' });
     await knex('app_releases').where({ id: rel.id }).update({ status: 'PUBLISHED', notes, published_at: nowIso() });
-    await audit(req, 'APP_RELEASE_PUBLISHED', 'APP_RELEASE', rel.version, { required: input.required, notes });
+    await audit(req, rollingBack ? 'APP_RELEASE_ROLLED_BACK' : 'APP_RELEASE_PUBLISHED', 'APP_RELEASE', rel.version, { required: input.required, notes });
     const reached = await pushRefresh({ scope: 'ALL' }, 'UPDATE_PUBLISHED');
-    res.json({ ok: true, version: rel.version, required: input.required, openAppsNotified: reached });
+    res.json({ ok: true, version: rel.version, required: input.required, rollback: rollingBack, openAppsNotified: reached });
   }));
 
   router.post('/app-updates/required', requireRole('OWNER'), ah(async (req: any, res: Response) => {

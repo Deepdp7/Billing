@@ -42,13 +42,14 @@ fn embed_engine_manifest(out: &PathBuf) {
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LICENSE_SERVER_URL");
+    println!("cargo:rerun-if-env-changed=APNA_BUILD");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     embed_data_key(&out);
     embed_engine_manifest(&out);
     // App commands the window may call; each gets an "allow-<name>" permission granted in capabilities/default.json.
     tauri_build::try_build(
         tauri_build::Attributes::new()
-            .app_manifest(tauri_build::AppManifest::new().commands(&["apna_install_update"])),
+            .app_manifest(tauri_build::AppManifest::new().commands(&["apna_install_update", "apna_ready", "apna_set_theme"])),
     )
     .expect("failed to run tauri-build");
 }

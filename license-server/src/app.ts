@@ -1,8 +1,10 @@
+import compression from 'compression';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { config } from './config.js';
 import clientRoutes from './routes/client.js';
+import syncRoutes from './routes/sync.js';
 import adminRoutes from './routes/admin.js';
 import { errorHandler } from './lib.js';
 import { knex } from './db.js';
@@ -34,6 +36,15 @@ export function createApp() {
     });
   }
 
+  // Smaller responses over the internet (the Admin Panel's files, API lists). Live event streams must never be held
+  // back to compress, and installers are compressed already.
+  app.use(compression({
+    filter: (req, res) => !req.path.startsWith('/updates')
+      && !String(res.getHeader('Content-Type') || '').includes('text/event-stream')
+      && compression.filter(req, res),
+  }));
+  // A computer's changes (and a first upload of a whole shop) come in batches of up to a few MB
+  app.use('/api/client/v1/sync', express.json({ limit: '16mb' }));
   app.use(express.json({ limit: '256kb' }));
 
   app.get('/api/health', async (req, res) => {
@@ -50,14 +61,18 @@ export function createApp() {
   // Missing update files must be a plain 404 (not the Admin Panel page), e.g. while an update is paused.
   app.use('/updates', (req, res) => res.status(404).json({ code: 'NOT_FOUND', message: 'No such update file' }));
 
+  app.use('/api/client/v1/sync', syncRoutes);
   app.use('/api/client/v1', clientRoutes);
   app.use('/api/admin/v1', adminRoutes);
   app.use('/api', (req, res) => res.status(404).json({ code: 'NOT_FOUND', message: 'Unknown endpoint' }));
 
   const index = path.join(config.adminPanelDir, 'index.html');
   if (fs.existsSync(index)) {
+    // Built files have a content hash in their name (assets/index-3f2a.js): browsers and the Admin app keep them, so
+    // the panel opens without downloading them again. index.html is always checked, so a deploy shows up at once.
+    app.use('/assets', express.static(path.join(config.adminPanelDir, 'assets'), { index: false, immutable: true, maxAge: '365d' }));
     app.use(express.static(config.adminPanelDir, { index: false }));
-    app.get('*', (req, res) => res.sendFile(index));
+    app.get('*', (req, res) => res.sendFile(index, { headers: { 'Cache-Control': 'no-cache' } }));
   }
 
   app.use(errorHandler);

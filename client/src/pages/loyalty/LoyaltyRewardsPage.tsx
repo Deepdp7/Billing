@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const LoyaltyRewardsPage: React.FC = () => {
   const { t } = useLanguage();
   const [rule, setRule] = useState<LoyaltyRule | null>(null);
@@ -39,8 +40,10 @@ export const LoyaltyRewardsPage: React.FC = () => {
   const [adjusting, setAdjusting] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void fetchData(true); });
+  const fetchData = async (quiet?: unknown) => {
+    if (quiet !== true) setIsLoading(true);
     try {
       const [ruleRes, txRes, custRes] = await Promise.all([
         api.getLoyaltyRule(),
@@ -60,7 +63,8 @@ export const LoyaltyRewardsPage: React.FC = () => {
       }
 
       setTransactions(txRes.transactions || []);
-      setCustomers((custRes as any).data || (custRes as any).customers || []);
+      const list = (custRes as any).data || (custRes as any).customers || [];
+      setCustomers(list.map((c: any) => ({ ...c, loyaltyPoints: c.loyalty_points ?? c.loyaltyPoints ?? 0 })));
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Failed to load loyalty details' });
     } finally {
@@ -92,7 +96,9 @@ export const LoyaltyRewardsPage: React.FC = () => {
     try {
       await api.adjustLoyaltyPoints({
         customerId: selectedCustomer.id,
-        points: Number(adjustData.points),
+        // Redeeming takes points away, earning adds them; a manual adjustment keeps the sign typed
+        points: adjustData.type === 'REDEEMED' ? -Math.abs(Number(adjustData.points))
+          : adjustData.type === 'EARNED' ? Math.abs(Number(adjustData.points)) : Number(adjustData.points),
         type: adjustData.type,
         notes: adjustData.notes,
       });
@@ -533,7 +539,7 @@ export const LoyaltyRewardsPage: React.FC = () => {
                             : 'text-indigo-600 dark:text-indigo-400'
                         }`}
                       >
-                        {isEarned ? '+' : isRedeemed ? '-' : ''}
+                        {tx.points > 0 ? '+' : '−'}
                         {Math.abs(tx.points)} Pts
                       </div>
                       <div className="text-[10px] text-slate-400 font-medium">

@@ -70,15 +70,21 @@ const router = (0, express_1.Router)();
 // ==========================================
 router.post('/auth/login', authCtrl.login);
 router.post('/auth/register', authCtrl.registerBusiness);
+router.post('/auth/forgot-password', authCtrl.forgotPassword);
+router.post('/auth/reset-password', authCtrl.resetPassword);
 router.post('/auth/erase-shop', auth_js_1.authenticate, authCtrl.eraseShop);
 router.get('/auth/me', auth_js_1.authenticate, authCtrl.getCurrentUser);
 // Local license management (talks to the central license server)
 router.get('/license/status', licenseCtrl.getStatus);
 router.post('/license/connectivity', licenseCtrl.checkConnectivity);
 router.get('/license/events', licenseCtrl.streamEvents);
+router.get('/sync/status', licenseCtrl.getSyncStatus);
 router.post('/license/trial', ...licenseCtrl.startTrial);
 router.post('/license/activate', ...licenseCtrl.activate);
+router.post('/license/join', ...licenseCtrl.joinAccount);
 router.post('/license/deactivate', ...licenseCtrl.deactivate);
+router.get('/license/devices', auth_js_1.authenticate, licenseCtrl.devices);
+router.post('/license/devices/:id/deactivate', auth_js_1.authenticate, ...licenseCtrl.deactivateDevice);
 router.post('/license/sync', auth_js_1.authenticate, licenseCtrl.sync);
 router.post('/license/usage', auth_js_1.authenticate, licenseCtrl.trackUsage);
 router.get('/license/usage', auth_js_1.authenticate, licenseCtrl.getUsage);
@@ -109,6 +115,10 @@ appRouter.put('/business/settings', ownerOnly, bizCtrl.updateSettings);
 // Catalog (Products & Categories)
 appRouter.get('/products', catalogCtrl.getProducts);
 appRouter.get('/products/export', catalogCtrl.exportProducts);
+appRouter.post('/products/import', catalogCtrl.importProducts);
+// Before /products/:id, which would take "options" for an id
+appRouter.get('/products/options', catalogCtrl.getProductOptions);
+appRouter.put('/products/options', catalogCtrl.updateProductOptions);
 appRouter.post('/products', catalogCtrl.createProduct);
 appRouter.put('/products/:id', catalogCtrl.updateProduct);
 appRouter.delete('/products/:id', catalogCtrl.deleteProduct);
@@ -140,6 +150,8 @@ appRouter.put('/customers/:id', customerCtrl.updateCustomer);
 appRouter.delete('/customers/:id', customerCtrl.deleteCustomer);
 appRouter.get('/customers/:id/ledger', customerCtrl.getCustomerLedger);
 appRouter.post('/customers/:id/payments', customerCtrl.receiveCustomerPayment);
+appRouter.post('/customers/:id/refund', customerCtrl.refundCustomerAdvance);
+appRouter.post('/customers/:id/payments/:paymentId/void', customerCtrl.voidCustomerPayment);
 // Inventory
 appRouter.get('/inventory/alerts', inventoryCtrl.getLowStockAlerts);
 appRouter.post('/inventory/adjust', inventoryCtrl.adjustStock);

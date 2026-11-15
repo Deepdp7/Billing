@@ -8,6 +8,9 @@ export default {
   theme: {
     extend: {
       colors: {
+        // slate follows the theme: the usual blue-grey in light, a neutral charcoal grey in dark (index.css)
+        slate: Object.fromEntries([50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950]
+          .map((n) => [n, `rgb(var(--slate-${n}) / <alpha-value>)`])),
         brand: {
           50: '#ecfdf5',
           100: '#d1fae5',

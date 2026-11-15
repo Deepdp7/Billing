@@ -5,6 +5,7 @@ import { DashboardStats, Invoice } from '../../types/index.js';
 import { formatINR, formatDate, formatDateTime } from '../../lib/utils.js';
 import { InvoiceModal } from '../../components/billing/InvoiceModal.js';
 import { TrialActivateCard } from '../license/LicensePage.js';
+import { useLiveRefresh } from '../../lib/live.js';
 import { 
   TrendingUp, ShoppingBag, AlertTriangle, Users, 
   ArrowUpRight, Plus, Eye, UtensilsCrossed, Pill, 
@@ -25,9 +26,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigate }) => {
     loadStats();
   }, []);
 
-  const loadStats = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadStats(true); });
+  const loadStats = async (quiet?: unknown) => {
     try {
-      setLoading(true);
+      if (quiet !== true) setLoading(true);
       const res = await api.getDashboardStats();
       setStats(res);
     } catch (err) {

@@ -71,11 +71,20 @@ export async function noticesFor(installation: any, license: any) {
   return rows.map((n: any) => ({ id: n.id, title: n.title, message: n.message, level: n.level, createdAt: n.created_at }));
 }
 
+/**
+ * Whether version a is older than b. A "+N" is an update of the same version, newer than the version without it:
+ * 1.2.3 < 1.2.3+1 < 1.2.3+2 < 1.2.4 (clients still see 1.2.3).
+ */
 export function versionLt(a: string, b: string) {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0);
+  const parts = (v: string) => {
+    const [main, update] = v.split('+');
+    const p = main.split('.').map(Number);
+    return [p[0] || 0, p[1] || 0, p[2] || 0, Number(update) || 0];
+  };
+  const pa = parts(a);
+  const pb = parts(b);
+  for (let i = 0; i < 4; i++) {
+    if (pa[i] !== pb[i]) return pa[i] < pb[i];
   }
   return false;
 }
@@ -117,13 +126,19 @@ export async function issueForInstallation(installationId: string) {
     jti: crypto.randomUUID(),
   };
 
+  // Offered to computers on an older version; after a rollback (an older version put live on purpose) to every
+  // computer on another version, so they all go back to it
   const appVersion = installation.app_version || '0.0.0';
-  const update = settings.latest_version && versionLt(appVersion, settings.latest_version)
+  const live = settings.latest_version;
+  const rollback = settings.rollback === '1';
+  const update = live && appVersion !== live && (versionLt(appVersion, live) || rollback)
     ? {
-      latestVersion: settings.latest_version,
-      message: settings.update_message || `Version ${settings.latest_version} is available.`,
+      latestVersion: live,
+      message: settings.update_message || `Version ${live} is available.`,
       url: settings.update_url || undefined,
-      mandatory: !!settings.min_supported_version && versionLt(appVersion, settings.min_supported_version),
+      mandatory: rollback
+        ? settings.min_supported_version === live
+        : !!settings.min_supported_version && versionLt(appVersion, settings.min_supported_version),
     }
     : null;
 

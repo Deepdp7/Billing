@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const AdminDashboardPage: React.FC = () => {
   const [stats, setStats] = useState<any>(null);
   const [businesses, setBusinesses] = useState<any[]>([]);
@@ -28,7 +29,9 @@ export const AdminDashboardPage: React.FC = () => {
     loadAdminData();
   }, [search]);
 
-  const loadAdminData = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadAdminData(true); });
+  const loadAdminData = async (quiet?: unknown) => {
     try {
       const [dashRes, bizRes, planRes, logRes] = await Promise.all([
         api.getAdminDashboard(),

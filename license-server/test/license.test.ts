@@ -90,6 +90,38 @@ test('trial activation registers the installation and returns a signed 7-day tok
   assert.notEqual(row.secret_hash, trial.installationSecret);
 });
 
+test('a shop set up in the app appears as a customer before any licence; a later trial uses the same customer', async () => {
+  const reg = await client('/register', { name: 'Ravi', businessName: 'Ravi Mart', email: 'Ravi@Mart.in', phone: '9111111111', category: 'GROCERY', device: device('PC-R') });
+  assert.equal(reg.status, 201, JSON.stringify(reg.data));
+  let customer = await knex('customers').where({ email: 'ravi@mart.in' }).first();
+  assert.equal(customer.business_name, 'Ravi Mart');
+  assert.equal((await knex('licenses').where({ customer_id: customer.id })).length, 0, 'no licence yet');
+  assert.ok((await knex('license_events').where({ customer_id: customer.id, event_type: 'CUSTOMER_REGISTERED' }).first()));
+
+  // Sent again (retried at start-up, or details changed): still one customer, details updated while unlicensed
+  assert.equal((await client('/register', { name: 'Ravi K', businessName: 'Ravi Super Mart', email: 'ravi@mart.in', device: device('PC-R') })).status, 201);
+  assert.equal((await knex('customers').where({ email: 'ravi@mart.in' })).length, 1);
+  customer = await knex('customers').where({ email: 'ravi@mart.in' }).first();
+  assert.equal(customer.business_name, 'Ravi Super Mart');
+  assert.equal(customer.phone, '9111111111', 'a missing phone keeps the one we had');
+
+  // The trial (or a key the vendor issues for this customer) attaches to the same customer
+  const t = await client('/trial', { name: 'Ravi K', businessName: 'Ravi Super Mart', email: 'ravi@mart.in', device: device('PC-R') });
+  assert.equal(t.status, 201, JSON.stringify(t.data));
+  assert.equal((await knex('customers').where({ email: 'ravi@mart.in' })).length, 1);
+  assert.equal((await knex('licenses').where({ customer_id: customer.id })).length, 1);
+
+  // Once licensed, nobody can rename the customer from outside
+  await client('/register', { name: 'Someone else', businessName: 'Taken Over', email: 'ravi@mart.in', device: device('PC-X') });
+  assert.equal((await knex('customers').where({ id: customer.id }).first()).business_name, 'Ravi Super Mart');
+
+  // Leave the counts the later tests expect
+  await knex('license_events').where({ customer_id: customer.id }).delete();
+  await knex('installations').where({ customer_id: customer.id }).delete();
+  await knex('licenses').where({ customer_id: customer.id }).delete();
+  await knex('customers').where({ id: customer.id }).delete();
+});
+
 test('one trial per email and per device', async () => {
   assert.equal((await client('/trial', { name: 'Asha', businessName: 'XY', email: 'asha@shop.in', device: device('PC-Z') })).data.code, 'TRIAL_ALREADY_USED');
   assert.equal((await client('/trial', { name: 'Other', businessName: 'XY', email: 'other@shop.in', device: device('PC-A') })).data.code, 'TRIAL_ALREADY_USED');
@@ -295,6 +327,37 @@ test('targeted notices and update notifications reach the right installation', a
   assert.equal(r.update.latestVersion, '1.2.0');
   assert.equal(r.update.mandatory, false);
   assert.equal((await admin('PUT', '/settings', { latest_version: 'banana' })).status, 400);
+});
+
+test('an update of the same version (+N) is offered to computers on that version, never back', async () => {
+  const { setSetting, versionLt } = await import('../src/entitlements.js');
+  assert.ok(versionLt('1.2.0', '1.2.0+1') && versionLt('1.2.0+1', '1.2.0+2') && versionLt('1.2.0+9', '1.2.1') && !versionLt('1.2.0+1', '1.2.0'));
+  await setSetting('latest_version', '1.2.0+1');
+  await setSetting('min_supported_version', '0.0.0');
+  await setSetting('rollback', '');
+  assert.equal((await client('/heartbeat', { appVersion: '1.2.0' }, trial)).data.update.latestVersion, '1.2.0+1');
+  assert.equal((await client('/heartbeat', { appVersion: '1.2.0+1' }, trial)).data.update, null);
+  assert.equal((await client('/heartbeat', { appVersion: '1.2.0+2' }, trial)).data.update, null, 'never back to an older update');
+  assert.equal((await admin('PUT', '/settings', { latest_version: '1.2.0+3' })).status, 200);
+});
+
+test('an update is offered only to other versions; after a rollback also to newer ones', async () => {
+  const { setSetting } = await import('../src/entitlements.js');
+  await setSetting('latest_version', '1.2.0');
+  await setSetting('min_supported_version', '0.0.0');
+  await setSetting('rollback', '');
+  assert.equal((await client('/heartbeat', { appVersion: '1.3.0' }, trial)).data.update, null, 'a newer app is not sent back');
+  assert.equal((await client('/heartbeat', { appVersion: '1.2.0' }, trial)).data.update, null, 'the live version is never offered to itself');
+
+  await setSetting('rollback', '1');
+  const r = (await client('/heartbeat', { appVersion: '1.3.0' }, trial)).data;
+  assert.equal(r.update.latestVersion, '1.2.0', 'rolled back: newer apps are offered the live version');
+  assert.equal(r.update.mandatory, false);
+  await setSetting('min_supported_version', '1.2.0');
+  assert.equal((await client('/heartbeat', { appVersion: '1.3.0' }, trial)).data.update.mandatory, true, 'required rollback');
+  assert.equal((await client('/heartbeat', { appVersion: '1.2.0' }, trial)).data.update, null);
+  await setSetting('rollback', '');
+  await setSetting('min_supported_version', '0.0.0');
 });
 
 test('role-based access: VIEWER cannot change licenses; audit log records admin actions', async () => {

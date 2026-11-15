@@ -102,6 +102,12 @@ const SETTING_META: Array<{ key: string; label: string; hint: string; type?: 'bo
   { key: 'update_message', label: 'Update message', hint: '' },
 ];
 
+/** What the server takes back: not the read-only status values it adds */
+const editable = (s: Record<string, string>) => {
+  const { smtp_pass_set, email_ready, ...rest } = s;
+  return rest;
+};
+
 export function SettingsPage() {
   const { can } = useApp();
   const { data, error } = useAsync(() => get('/settings'), [], { live: false });
@@ -110,8 +116,8 @@ export function SettingsPage() {
   useEffect(() => { if (data) setS(data.settings); }, [data]);
   return (
     <div>
-      <PageHeader title="System Settings" subtitle="Trials, offline policy and update notifications"
-        actions={can('OWNER') && <Button tone="primary" busy={busy} onClick={() => run(async () => { setS((await put('/settings', s)).settings); }, 'Settings saved')}>Save</Button>} />
+      <PageHeader title="System Settings" subtitle="Trials, offline policy, update notifications and email"
+        actions={can('OWNER') && <Button tone="primary" busy={busy} onClick={() => run(async () => { setS((await put('/settings', editable(s))).settings); }, 'Settings saved')}>Save</Button>} />
       <Alert>{error}</Alert>
       <Alert tone={msg?.tone}>{msg?.text}</Alert>
       <Card>
@@ -125,7 +131,55 @@ export function SettingsPage() {
           ))}
         </div>
       </Card>
+      <EmailSettings s={s} setS={setS} canEdit={can('OWNER')} />
     </div>
+  );
+}
+
+const EMAIL_META: Array<{ key: string; label: string; hint: string; placeholder: string }> = [
+  { key: 'smtp_host', label: 'Mail server (SMTP)', hint: 'Gmail: smtp.gmail.com · Zoho: smtp.zoho.in · Hostinger: smtp.hostinger.com', placeholder: 'smtp.gmail.com' },
+  { key: 'smtp_port', label: 'Port', hint: '587 (STARTTLS) or 465 (SSL)', placeholder: '587' },
+  { key: 'smtp_user', label: 'Username', hint: 'Usually the full email address', placeholder: 'you@gmail.com' },
+  { key: 'smtp_from', label: 'Send from', hint: 'The address shops see the code come from', placeholder: 'Apna Billing <you@gmail.com>' },
+];
+
+/** Where the "Forgot password" codes are sent from (the billing app's sign-in page) */
+function EmailSettings({ s, setS, canEdit }: { s: Record<string, string>; setS: (v: Record<string, string>) => void; canEdit: boolean }) {
+  const [to, setTo] = useState('');
+  const test = useAction();
+  return (
+    <Card title="Email for password reset codes" className="mt-4">
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        When a shop presses “Forgot password?” in the billing app, a 6-digit code is emailed from this account.
+        For Gmail, turn on 2-step verification and use an <b>App password</b> (Google Account → Security → App passwords), not the normal password.
+        {' '}Status: <b className={s.email_ready === '1' ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>{s.email_ready === '1' ? 'ready' : 'not set up'}</b>
+      </p>
+      <div className="grid md:grid-cols-2 gap-4">
+        {EMAIL_META.map((m) => (
+          <Field key={m.key} label={m.label} hint={m.hint}>
+            <Input disabled={!canEdit} placeholder={m.placeholder} value={s[m.key] || ''} onChange={(e) => setS({ ...s, [m.key]: e.target.value })} />
+          </Field>
+        ))}
+        <Field label="Password" hint={s.smtp_pass_set === '1' ? 'Saved (kept encrypted). Type a new one only to replace it.' : 'The mail account’s (app) password'}>
+          <Input disabled={!canEdit} type="password" autoComplete="new-password" placeholder={s.smtp_pass_set === '1' ? '••••••••' : ''}
+            value={s.smtp_pass || ''} onChange={(e) => setS({ ...s, smtp_pass: e.target.value })} />
+        </Field>
+        <Field label="Security" hint="465 uses SSL; 587 upgrades with STARTTLS">
+          <Select disabled={!canEdit} value={s.smtp_secure || ((s.smtp_port || '587') === '465' ? '1' : '0')} onChange={(e) => setS({ ...s, smtp_secure: e.target.value })}>
+            <option value="0">STARTTLS (port 587)</option><option value="1">SSL (port 465)</option>
+          </Select>
+        </Field>
+      </div>
+      {canEdit && (
+        <div className="mt-4 flex flex-wrap items-end gap-2">
+          <Field label="Send a test email to (save first)">
+            <Input type="email" value={to} placeholder="you@example.com" onChange={(e) => setTo(e.target.value)} className="w-64" />
+          </Field>
+          <Button busy={test.busy} onClick={() => test.run(() => post('/settings/test-email', { to: to.trim() }), `Test email sent to ${to.trim()}. Check the inbox (and spam).`)}>Send test</Button>
+        </div>
+      )}
+      <div className="mt-3"><Alert tone={test.msg?.tone}>{test.msg?.text}</Alert></div>
+    </Card>
   );
 }
 
@@ -133,11 +187,25 @@ export function AdminUsersPage() {
   const { admin } = useApp();
   const { data, error, reload } = useAsync(() => get('/admin-users'), []);
   const [form, setForm] = useState<any | null>(null);
-  const { busy, msg, run } = useAction();
+  const { busy, msg, setMsg, run } = useAction();
+  // The Add admin window shows its own problems, inside it (not on the page behind)
+  const create = useAction();
+  const addAdmin = () => {
+    const problem = !form.name.trim() ? 'Enter their name.'
+      : !/^\S+@\S+\.\S+$/.test(form.email.trim()) ? 'Enter a valid email address.'
+        : form.password.length < 10 ? 'The temporary password must be at least 10 characters.' : '';
+    if (problem) return create.setMsg({ tone: 'error', text: problem });
+    void create.run(async () => {
+      await post('/admin-users', { ...form, name: form.name.trim(), email: form.email.trim() });
+      setForm(null);
+      reload();
+      setMsg({ tone: 'success', text: `${form.name.trim()} added as ${form.role}. Give them the Admin app and this temporary password.` });
+    });
+  };
   return (
     <div>
       <PageHeader title="Admin Users" subtitle="OWNER: everything · ADMIN: licenses & features · SUPPORT: view, extend trials, notices · VIEWER: read-only"
-        actions={<Button tone="primary" onClick={() => setForm({ email: '', name: '', role: 'SUPPORT', password: '' })}><Plus className="w-3.5 h-3.5" />Add admin</Button>} />
+        actions={<Button tone="primary" onClick={() => { create.setMsg(null); setForm({ email: '', name: '', role: 'SUPPORT', password: '' }); }}><Plus className="w-3.5 h-3.5" />Add admin</Button>} />
       <Alert>{error}</Alert>
       <Alert tone={msg?.tone}>{msg?.text}</Alert>
       <Table rows={data?.data} columns={[
@@ -153,7 +221,8 @@ export function AdminUsersPage() {
             {r.status === 'ACTIVE' ? 'Disable' : 'Enable'}</Button>) },
       ]} />
       {form && (
-        <Modal title="Add admin" onClose={() => setForm(null)} footer={<Button tone="primary" busy={busy} onClick={() => run(async () => { await post('/admin-users', form); setForm(null); reload(); }, 'Admin added')}>Create</Button>}>
+        <Modal title="Add admin" onClose={() => setForm(null)} footer={<Button tone="primary" busy={create.busy} onClick={addAdmin}>Create</Button>}>
+          <Alert tone={create.msg?.tone}>{create.msg?.text}</Alert>
           <Field label="Name"><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
           <Field label="Email"><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
           <Field label="Role"><Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>{['OWNER', 'ADMIN', 'SUPPORT', 'VIEWER'].map((x) => <option key={x}>{x}</option>)}</Select></Field>

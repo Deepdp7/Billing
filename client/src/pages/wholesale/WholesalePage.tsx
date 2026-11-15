@@ -10,6 +10,7 @@ import {
 import { confirmDialog } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const WholesalePage: React.FC = () => {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<'slabs' | 'dealers' | 'routes'>('slabs');
@@ -59,8 +60,10 @@ export const WholesalePage: React.FC = () => {
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void fetchData(true); });
+  const fetchData = async (quiet?: unknown) => {
+    if (quiet !== true) setIsLoading(true);
     try {
       const [slabRes, routeRes, prodRes, custRes, sumRes] = await Promise.all([
         api.getBulkSlabs(),

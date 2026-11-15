@@ -11,6 +11,7 @@ import { effectiveLicenseStatus, getSettings, setSetting, resolveFeatures } from
 import { isConnected, pushRefresh } from '../realtime.js';
 import { registerUpdateRoutes } from './updates.js';
 import { attachAdminStream } from '../adminLive.js';
+import { accountSummary, changeAccount, codeEmail, emailConfigured, openSecret, publicCustomer, sealSecret, sendMail, SMTP_KEYS } from '../accounts.js';
 
 const router = Router();
 const DAY = 86400000;
@@ -44,11 +45,15 @@ const requireRole = (min: Role) => (req: AdminRequest, res: Response, next: Next
 
 // ======================= Authentication =======================
 
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 12);
+
 router.post('/auth/login', rateLimit({ name: 'admin-login', windowMs: 15 * 60 * 1000, max: 10, key: (r) => `${r.ip}|${String(r.body?.email).toLowerCase()}` }),
   ah(async (req: Request, res: Response) => {
     const { email, password, totp } = parse(z.object({ email: z.string().trim().toLowerCase().email(), password: z.string().min(1).max(200), totp: z.string().optional() }), req.body);
     const admin = await knex('admin_users').where({ email }).first();
-    const ok = admin && admin.status === 'ACTIVE' && bcrypt.compareSync(password, admin.password_hash);
+    // Always check a password hash, so an unknown email takes as long as a wrong password (no hint which emails exist)
+    const passwordOk = bcrypt.compareSync(password, admin?.password_hash || DUMMY_HASH);
+    const ok = admin && admin.status === 'ACTIVE' && passwordOk;
     if (!ok) {
       await knex('audit_logs').insert({ id: crypto.randomUUID(), admin_email: email, action: 'LOGIN_FAILED', entity_type: 'ADMIN', details_json: '{}', ip: req.ip, created_at: nowIso() });
       throw new HttpError(401, 'INVALID_CREDENTIALS', 'Invalid email or password');
@@ -98,6 +103,11 @@ router.post('/auth/change-password', ah(async (req: AdminRequest, res: Response)
 }));
 
 router.post('/auth/totp/setup', ah(async (req: AdminRequest, res: Response) => {
+  // While two-step login is on, a new secret would switch it off: that needs the current code (Turn off) first
+  const current = await knex('admin_users').where({ id: req.admin!.id }).first();
+  if (bool(current.totp_enabled)) {
+    throw new HttpError(409, 'TOTP_ALREADY_ENABLED', 'Two-step login is already on. Turn it off with a code from your app first.');
+  }
   const secret = base32Encode(crypto.randomBytes(20));
   await knex('admin_users').where({ id: req.admin!.id }).update({ totp_secret: secret, totp_enabled: false });
   const label = encodeURIComponent(`Apna Billing Admin:${req.admin!.email}`);
@@ -181,7 +191,7 @@ router.get('/customers', ah(async (req: Request, res: Response) => {
     knex.raw('(SELECT MAX(i.last_seen_at) FROM installations i WHERE i.customer_id = c.id) AS last_seen_at'))
     .orderBy('c.created_at', 'desc').limit(500);
   if (search) q.where((w) => w.where('c.name', 'like', `%${search}%`).orWhere('c.email', 'like', `%${search}%`).orWhere('c.business_name', 'like', `%${search}%`).orWhere('c.phone', 'like', `%${search}%`));
-  res.json({ data: (await q).map((r: any) => ({ ...r, license_count: Number(r.license_count), installation_count: Number(r.installation_count) })) });
+  res.json({ data: (await q).map((r: any) => ({ ...publicCustomer(r), license_count: Number(r.license_count), installation_count: Number(r.installation_count) })) });
 }));
 
 router.post('/customers', requireRole('ADMIN'), ah(async (req: AdminRequest, res: Response) => {
@@ -190,7 +200,7 @@ router.post('/customers', requireRole('ADMIN'), ah(async (req: AdminRequest, res
   await knex('customers').insert({ id, name: c.name, business_name: c.businessName || null, email: c.email || null, phone: c.phone || null,
     notes: c.notes || null, status: 'ACTIVE', created_at: nowIso(), updated_at: nowIso() });
   await audit(req, 'CUSTOMER_CREATED', 'CUSTOMER', id, { name: c.name });
-  res.status(201).json({ customer: await knex('customers').where({ id }).first() });
+  res.status(201).json({ customer: publicCustomer(await knex('customers').where({ id }).first()) });
 }));
 
 router.get('/customers/:id', ah(async (req: Request, res: Response) => {
@@ -202,8 +212,11 @@ router.get('/customers/:id', ah(async (req: Request, res: Response) => {
   const usage = await knex('usage_daily as u').join('installations as i', 'i.id', 'u.installation_id').where('i.customer_id', customer.id)
     .select('u.feature_key').sum({ count: 'u.count' }).min({ first_used: 'u.first_used_at' }).max({ last_used: 'u.last_used_at' })
     .groupBy('u.feature_key').orderBy('count', 'desc');
+  const rev = Number(customer.app_account_rev || 0);
   res.json({
-    customer,
+    customer: publicCustomer(customer),
+    // The billing app's sign-in; "waiting" lists the computers that have not taken over the last change yet
+    account: { ...accountSummary(customer), waiting: installations.filter((i: any) => i.status !== 'DEACTIVATED' && Number(i.account_rev || 0) < rev).length },
     licenses: licenses.map((l: any) => ({ ...l, effective_status: effectiveLicenseStatus(l) })),
     installations: installations.map(publicInstallation),
     usage: usage.map((u: any) => ({ ...u, count: Number(u.count) })),
@@ -224,7 +237,38 @@ router.put('/customers/:id', requireRole('ADMIN'), ah(async (req: AdminRequest, 
   await knex('customers').where({ id: existing.id }).update(patch);
   await audit(req, 'CUSTOMER_UPDATED', 'CUSTOMER', existing.id, { fields: Object.keys(c) });
   if (c.status !== undefined || c.name !== undefined || c.businessName !== undefined) await pushRefresh({ scope: 'CUSTOMER', id: existing.id }, 'CUSTOMER_UPDATED');
-  res.json({ customer: await knex('customers').where({ id: existing.id }).first() });
+  res.json({ customer: publicCustomer(await knex('customers').where({ id: existing.id }).first()) });
+}));
+
+/** The billing app's password, shown on request to an owner only; every look is in the audit log */
+router.post('/customers/:id/app-password', requireRole('OWNER'), ah(async (req: AdminRequest, res: Response) => {
+  const customer = await knex('customers').where({ id: req.params.id }).first();
+  if (!customer) throw new HttpError(404, 'NOT_FOUND', 'Customer not found');
+  const password = openSecret(customer.app_password_enc);
+  if (!password) {
+    throw new HttpError(404, 'PASSWORD_NOT_KNOWN',
+      'Not known yet: the shop’s app sends it the next time someone signs in (or sets a new password) on a computer with this version.');
+  }
+  await audit(req, 'APP_PASSWORD_VIEWED', 'CUSTOMER', customer.id, { email: customer.app_email || customer.email });
+  res.json({ password });
+}));
+
+/** New sign-in email and/or password for the billing app; every computer of the customer takes it over */
+router.put('/customers/:id/app-account', requireRole('ADMIN'), ah(async (req: AdminRequest, res: Response) => {
+  const input = parse(z.object({
+    email: z.string().trim().toLowerCase().email('Enter a valid email').max(150).optional(),
+    password: z.string().min(8, 'The password needs at least 8 characters').max(200).optional(),
+  }).refine((v) => v.email || v.password, 'Enter a new email or password'), req.body);
+  const customer = await knex('customers').where({ id: req.params.id }).first();
+  if (!customer) throw new HttpError(404, 'NOT_FOUND', 'Customer not found');
+  if (input.email) {
+    const other = await knex('customers').whereNot({ id: customer.id }).whereRaw('lower(app_email) = ?', [input.email]).first();
+    if (other) throw new HttpError(409, 'EMAIL_IN_USE', `${input.email} is already the sign-in of ${other.business_name || other.name}.`);
+  }
+  const live = await changeAccount(customer.id, { ...input, by: 'ADMIN' });
+  await audit(req, 'APP_ACCOUNT_CHANGED', 'CUSTOMER', customer.id, { email: input.email || undefined, passwordChanged: !!input.password });
+  const fresh = await knex('customers').where({ id: customer.id }).first();
+  res.json({ account: { ...accountSummary(fresh), waiting: 1 }, live });
 }));
 
 /**
@@ -233,7 +277,9 @@ router.put('/customers/:id', requireRole('ADMIN'), ah(async (req: AdminRequest, 
  * longer receive a signed SUSPENDED/REVOKED token, so it would keep working until its offline grace ran out.
  */
 router.delete('/customers/:id', requireRole('OWNER'), ah(async (req: AdminRequest, res: Response) => {
-  const { confirmName, reason } = parse(z.object({ confirmName: z.string().trim().min(1), reason: z.string().trim().max(500).optional() }), req.body);
+  const { confirmName, reason, eraseDevices } = parse(z.object({ confirmName: z.string().trim().min(1), reason: z.string().trim().max(500).optional(),
+    // Also when computers still use a licence: each of them erases the shop (after saving a safety backup there)
+    eraseDevices: z.boolean().optional() }), req.body);
   const customer = await knex('customers').where({ id: req.params.id }).first();
   if (!customer) throw new HttpError(404, 'NOT_FOUND', 'Customer not found');
   const expected = String(customer.business_name || customer.name).trim();
@@ -245,10 +291,10 @@ router.delete('/customers/:id', requireRole('OWNER'), ah(async (req: AdminReques
   const installations = await knex('installations').where({ customer_id: customer.id });
   const licenseById = new Map(licenses.map((l: any) => [l.id, l]));
   const live = installations.filter((i: any) => i.status === 'ACTIVE' && effectiveLicenseStatus(licenseById.get(i.license_id)) === 'ACTIVE');
-  if (live.length) {
+  if (live.length && !eraseDevices) {
     throw new HttpError(409, 'CUSTOMER_HAS_ACTIVE_DEVICES',
       `${live.length} device(s) can still use a license (${live.map((i: any) => i.device_name || i.id).join(', ')}). ` +
-      'Revoke or suspend the license, or deactivate those devices, then delete the customer.');
+      'Tick "Erase the shop on its computers too", or revoke the license first.');
   }
 
   const licenseIds = licenses.map((l: any) => l.id);
@@ -271,6 +317,8 @@ router.delete('/customers/:id', requireRole('OWNER'), ah(async (req: AdminReques
       w.where({ customer_id: customer.id });
       if (licenseIds.length) w.orWhereIn('license_id', licenseIds);
     }).delete();
+    await trx('password_resets').where({ customer_id: customer.id }).delete();
+    for (const t of ['sync_deltas', 'sync_rows', 'sync_devices', 'sync_workspaces']) await trx(t).where({ customer_id: customer.id }).delete();
     await trx('installations').where({ customer_id: customer.id }).delete();
     await trx('licenses').where({ customer_id: customer.id }).delete();
     await trx('customers').where({ id: customer.id }).delete();
@@ -359,7 +407,7 @@ router.get('/licenses/:id', ah(async (req: Request, res: Response) => {
   const overrides = await knex('feature_overrides').where({ scope: 'LICENSE', scope_id: license.id });
   const features = await resolveFeatures({ plan, customerId: customer.id, licenseId: license.id });
   res.json({
-    license: { ...license, effective_status: effectiveLicenseStatus(license) }, plan, customer,
+    license: { ...license, effective_status: effectiveLicenseStatus(license) }, plan, customer: publicCustomer(customer),
     installations: installations.map(publicInstallation),
     events: events.map((e: any) => ({ ...e, details: parseJson(e.details_json, {}) })),
     overrides, features,
@@ -459,6 +507,8 @@ router.put('/licenses/:id', requireRole('ADMIN'), ah(async (req: AdminRequest, r
   const input = parse(z.object({
     maxDevices: z.number().int().min(1).max(1000).optional(),
     maxActivations: z.number().int().min(1).max(10000).nullable().optional(),
+    // "Activations used" set back, e.g. to the computers that still use the licence (after uninstalls or deletions)
+    activationsCount: z.number().int().min(0).max(100000).optional(),
     expiresAt: z.string().datetime().nullable().optional(),
     paymentReference: z.string().max(120).nullable().optional(),
     paymentAmountPaise: z.number().int().min(0).nullable().optional(),
@@ -469,6 +519,7 @@ router.put('/licenses/:id', requireRole('ADMIN'), ah(async (req: AdminRequest, r
   const patch: Record<string, unknown> = {};
   if (input.maxDevices !== undefined) patch.max_devices = input.maxDevices;
   if (input.maxActivations !== undefined) patch.max_activations = input.maxActivations;
+  if (input.activationsCount !== undefined) patch.activations_count = input.activationsCount;
   if (input.expiresAt !== undefined) patch.expires_at = input.expiresAt;
   if (input.paymentReference !== undefined) patch.payment_reference = input.paymentReference;
   if (input.paymentAmountPaise !== undefined) patch.payment_amount_paise = input.paymentAmountPaise;
@@ -543,10 +594,32 @@ router.get('/installations/:id', ah(async (req: Request, res: Response) => {
     .min({ first_used: 'first_used_at' }).max({ last_used: 'last_used_at' }).countDistinct({ active_days: 'usage_date' }).groupBy('feature_key').orderBy('count', 'desc');
   const events = await knex('license_events').where({ installation_id: inst.id }).orderBy('created_at', 'desc').limit(100);
   res.json({
-    installation: { ...publicInstallation(inst), live: isConnected(inst.id) }, license: { ...license, effective_status: effectiveLicenseStatus(license) }, plan, customer, features, overrides,
+    installation: { ...publicInstallation(inst), live: isConnected(inst.id) }, license: { ...license, effective_status: effectiveLicenseStatus(license) }, plan, customer: publicCustomer(customer), features, overrides,
     usage: usage.map((u: any) => ({ ...u, count: Number(u.count), active_days: Number(u.active_days) })),
     events: events.map((e: any) => ({ ...e, details: parseJson(e.details_json, {}) })),
   });
+}));
+
+/**
+ * Removes a device from the list for good (an uninstalled computer, or one the shop no longer has). If it is still
+ * running it is signed out at once (or when it next connects); it keeps its data. The audit log keeps a record.
+ */
+router.delete('/installations/:id', requireRole('ADMIN'), ah(async (req: AdminRequest, res: Response) => {
+  const inst = await knex('installations').where({ id: req.params.id }).first();
+  if (!inst) throw new HttpError(404, 'NOT_FOUND', 'Installation not found');
+  const live = (await pushRefresh({ scope: 'INSTALLATION', id: inst.id }, 'INSTALLATION_DEACTIVATED')) > 0;
+  await knex.transaction(async (trx) => {
+    await trx('removed_installations').insert({ id: inst.id, reason: 'DELETED_BY_ADMIN', removed_at: nowIso() }).onConflict('id').ignore();
+    await trx('feature_overrides').where({ scope: 'INSTALLATION', scope_id: inst.id }).delete();
+    await trx('notices').where({ target_scope: 'INSTALLATION', target_id: inst.id }).delete();
+    await trx('usage_daily').where({ installation_id: inst.id }).delete();
+    await trx('sync_devices').where({ installation_id: inst.id }).delete();
+    await trx('installations').where({ id: inst.id }).delete();
+  });
+  await licenseEvent({ licenseId: inst.license_id, customerId: inst.customer_id, type: 'INSTALLATION_DELETED', actor: req.admin!.id,
+    details: { deviceName: inst.device_name, installationId: inst.id } });
+  await audit(req, 'INSTALLATION_DELETED', 'INSTALLATION', inst.id, { deviceName: inst.device_name, customerId: inst.customer_id });
+  res.json({ deleted: true, live });
 }));
 
 const INSTALLATION_ACTIONS: Record<string, { patch: () => Record<string, unknown>; event: string; role: Role }> = {
@@ -753,23 +826,43 @@ router.get('/audit-logs', requireRole('ADMIN'), ah(async (req: Request, res: Res
   res.json({ data: (await q).map((a: any) => ({ ...a, details: parseJson(a.details_json, {}) })) });
 }));
 
-const SETTING_KEYS = ['trial_days', 'trials_enabled', 'trial_one_per_email', 'trial_one_per_device', 'offline_grace_days', 'latest_version', 'min_supported_version', 'update_url', 'update_message'];
+const SETTING_KEYS = [...SMTP_KEYS, 'trial_days', 'trials_enabled', 'trial_one_per_email', 'trial_one_per_device', 'offline_grace_days', 'latest_version', 'min_supported_version', 'update_url', 'update_message'];
+
+/** The settings, without the stored mail password (only whether one is set) */
+async function publicSettings() {
+  const { smtp_pass_enc, ...rest } = await getSettings();
+  return { ...rest, smtp_pass_set: smtp_pass_enc ? '1' : '0', email_ready: (await emailConfigured()) ? '1' : '0' };
+}
 
 router.get('/settings', ah(async (req: Request, res: Response) => {
-  res.json({ settings: await getSettings() });
+  res.json({ settings: await publicSettings() });
 }));
 
 router.put('/settings', requireRole('OWNER'), ah(async (req: AdminRequest, res: Response) => {
   const input = parse(z.record(z.string(), z.string().max(500)), req.body);
+  // The mail password is kept encrypted; an empty value leaves it as it is
+  if ('smtp_pass' in input) {
+    if (input.smtp_pass) await setSetting('smtp_pass_enc', sealSecret(input.smtp_pass));
+    delete input.smtp_pass;
+  }
   for (const [k, v] of Object.entries(input)) {
     if (!SETTING_KEYS.includes(k)) throw new HttpError(400, 'UNKNOWN_SETTING', `Unknown setting ${k}`);
+    if (k === 'smtp_port' && v && !(Number(v) >= 1 && Number(v) <= 65535)) throw new HttpError(400, 'INVALID_SETTING', 'The mail port must be a number like 587 or 465');
     if (['trial_days', 'offline_grace_days'].includes(k) && !(Number(v) >= 1 && Number(v) <= 365)) throw new HttpError(400, 'INVALID_SETTING', `${k} must be 1–365`);
-    if (['latest_version', 'min_supported_version'].includes(k) && v && !/^\d+\.\d+\.\d+$/.test(v)) throw new HttpError(400, 'INVALID_SETTING', `${k} must look like 1.2.3`);
+    if (['latest_version', 'min_supported_version'].includes(k) && v && !/^\d+\.\d+\.\d+(\+\d+)?$/.test(v)) throw new HttpError(400, 'INVALID_SETTING', `${k} must look like 1.2.3 (or 1.2.3+2)`);
     await setSetting(k, v);
   }
   await audit(req, 'SETTINGS_UPDATED', 'SETTINGS', null, input);
-  await pushRefresh({ scope: 'ALL' }, 'SETTINGS_UPDATED');
-  res.json({ settings: await getSettings() });
+  if (Object.keys(input).some((k) => !SMTP_KEYS.includes(k))) await pushRefresh({ scope: 'ALL' }, 'SETTINGS_UPDATED');
+  res.json({ settings: await publicSettings() });
+}));
+
+/** Sends a sample reset-code email, to check the mail settings */
+router.post('/settings/test-email', requireRole('OWNER'), ah(async (req: AdminRequest, res: Response) => {
+  const { to } = parse(z.object({ to: z.string().trim().email('Enter a valid email') }), req.body);
+  const mail = codeEmail('123456', 'Test email');
+  await sendMail(to, 'Apna Billing test email', `This is a test.\n\n${mail.text}`, mail.html);
+  res.json({ ok: true });
 }));
 
 // ======================= Admin users =======================

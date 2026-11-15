@@ -13,12 +13,6 @@ after(async () => { await api.close(); });
 
 const stockOf = async (id: string) => (await api.get(`/app/products?search=`)).data.data.find((p: any) => p.id === id).stock_quantity;
 
-test('first-run setup: a second business cannot be registered on a single-tenant install', async () => {
-  const res = await api.post('/auth/register', { ownerName: 'X', email: 'x@y.z', password: 'password123', businessName: 'Other', category: 'GROCERY' });
-  assert.equal(res.status, 403);
-  assert.equal(res.data.code, 'SETUP_COMPLETE');
-});
-
 test('cash sale: invoice saved, stock deducted, payment recorded, number assigned', async () => {
   const p = await createProduct(api, { name: 'Rice 1kg', stockQuantity: 10 });
   const res = await api.post('/app/billing/checkout', { items: [{ productId: p.id, quantity: 2, unitPricePaise: 10000 }], paymentMode: 'CASH' });
@@ -145,11 +139,10 @@ test('inter-state customer gets IGST automatically', async () => {
   assert.equal(res.data.invoice.cgst_paise, 0);
 });
 
-test('cancel requires a reason, restores stock, refunds payment and writes an audit entry', async () => {
+test('cancel (reason optional) restores stock, refunds payment and writes an audit entry', async () => {
   const p = await createProduct(api, { stockQuantity: 10 });
   const inv = (await api.post('/app/billing/checkout', { items: [{ productId: p.id, quantity: 4, unitPricePaise: 10000 }], paymentMode: 'UPI' })).data.invoice;
   assert.equal(await stockOf(p.id), 6);
-  assert.equal((await api.post(`/app/billing/invoices/${inv.id}/cancel`, {})).status, 400);
   const res = await api.post(`/app/billing/invoices/${inv.id}/cancel`, { reason: 'Customer changed mind' });
   assert.equal(res.status, 200);
   assert.equal(res.data.invoice.status, 'CANCELLED');
@@ -160,6 +153,23 @@ test('cancel requires a reason, restores stock, refunds payment and writes an au
   assert.equal((await api.post(`/app/billing/invoices/${inv.id}/cancel`, { reason: 'again' })).status, 409);
   const logs = (await api.get('/app/audit/logs')).data.logs;
   assert.ok(logs.some((l: any) => l.action === 'INVOICE_CANCELLED' && l.entity_id === inv.id));
+});
+
+test('customer advance: paying after a deleted credit bill leaves an advance, which can be returned', async () => {
+  const p = await createProduct(api, { stockQuantity: 10 });
+  const c = (await api.post('/app/customers', { name: 'Advance Test', phone: '9000011111' })).data.customer;
+  const inv = (await api.post('/app/billing/checkout', { customerId: c.id, items: [{ productId: p.id, quantity: 1, unitPricePaise: 10000 }], paymentMode: 'CREDIT' })).data.invoice;
+  assert.equal((await api.post(`/app/billing/invoices/${inv.id}/cancel`, {})).status, 200);
+  assert.equal((await api.post(`/app/customers/${c.id}/payments`, { amountPaise: inv.total_paise, mode: 'CASH' })).status, 201);
+  const balance = async () => (await api.get('/app/customers?search=Advance%20Test')).data.data[0].outstanding_balance_paise;
+  assert.equal(await balance(), -inv.total_paise);
+  const blocked = await api.del(`/app/customers/${c.id}`);
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.data.message, /advance/);
+  assert.equal((await api.post(`/app/customers/${c.id}/refund`, { amountPaise: inv.total_paise + 1, mode: 'CASH' })).status, 400);
+  assert.equal((await api.post(`/app/customers/${c.id}/refund`, { amountPaise: inv.total_paise, mode: 'CASH' })).status, 201);
+  assert.equal(await balance(), 0);
+  assert.equal((await api.post(`/app/customers/${c.id}/refund`, { amountPaise: 100, mode: 'CASH' })).status, 400);
 });
 
 test('draft lifecycle: save draft (no stock change) → edit → issue', async () => {
@@ -310,6 +320,73 @@ test('reports: P&L uses cost at time of sale; registry reports and CSV/XLSX expo
   assert.equal(custCsv.status, 200);
 });
 
+test('products: the Excel export imports back; a CSV adds and updates by SKU, makes categories, uses the stock ledger', async () => {
+  // The export is the template: importing it unchanged updates every product and adds none
+  const xlsx = await api.getRaw('/app/products/export?format=xlsx');
+  const back = await api.post('/app/products/import', { fileName: 'products.xlsx', data: xlsx.buffer.toString('base64') });
+  assert.equal(back.status, 200, JSON.stringify(back.data));
+  assert.equal(back.data.created, 0);
+  assert.ok(back.data.updated > 0);
+  assert.equal(back.data.skipped, 0, JSON.stringify(back.data.errors));
+
+  // Common column names, any order, a new category, prices with ₹ and commas; a bad row is skipped and explained
+  const csv = 'Name,SKU,Category,Unit,GST %,Selling Price,Stock\r\nImported Tea,IMP-TEA-1,Imported Drinks,box,5,"₹1,250.50",12\r\nBroken,IMP-BAD,,pcs,5,abc,1\r\n';
+  const added = await api.post('/app/products/import', { fileName: 'products.csv', data: Buffer.from(csv).toString('base64') });
+  assert.equal(added.status, 200, JSON.stringify(added.data));
+  assert.equal(added.data.created, 1);
+  assert.equal(added.data.skipped, 1);
+  assert.equal(added.data.errors[0].row, 3);
+  assert.match(added.data.errors[0].message, /not a number/);
+  let tea = (await api.get('/app/products?search=Imported%20Tea')).data.data[0];
+  assert.equal(tea.sale_price_paise, 125050);
+  assert.equal(tea.unit, 'box');
+  assert.equal(tea.tax_rate, 5);
+  assert.equal(tea.stock_quantity, 12);
+  assert.ok((await api.get('/app/categories')).data.data.some((c: any) => c.name === 'Imported Drinks'));
+
+  // The same SKU again updates it (no duplicate); the stock change is a ledger entry
+  const again = await api.post('/app/products/import', { fileName: 'p.csv', data: Buffer.from('Name,SKU,Selling Price,Stock\nImported Tea,IMP-TEA-1,1300,20\n').toString('base64') });
+  assert.deepEqual([again.data.created, again.data.updated], [0, 1]);
+  tea = (await api.get('/app/products?search=Imported%20Tea')).data.data;
+  assert.equal(tea.length, 1);
+  assert.equal(tea[0].stock_quantity, 20);
+  assert.equal(tea[0].sale_price_paise, 130000);
+
+  assert.equal((await api.post('/app/products/import', { fileName: 'x.csv', data: Buffer.from('Foo,Bar\n1,2\n').toString('base64') })).data.code, 'IMPORT_COLUMNS');
+});
+
+test('categories: the form is offered the ones that fit the business and are not there yet', async () => {
+  const r = (await api.get('/app/categories')).data;
+  assert.ok(Array.isArray(r.suggestions));
+  const have = new Set(r.data.map((c: any) => c.name.toLowerCase()));
+  assert.ok(r.suggestions.every((n: string) => !have.has(n.toLowerCase())));
+});
+
+test('product lists: categories, units and GST rates can be added, renamed and deleted', async () => {
+  // Units and rates start from the defaults, each with how many products use it
+  let o = (await api.get('/app/products/options')).data;
+  assert.ok(o.units.some((u: any) => u.value === 'pcs' && u.products > 0));
+  assert.ok(o.gstRates.some((r: any) => r.rate === '18'));
+
+  // Own lists: a new unit and a new rate; a renamed unit takes its products along
+  o = (await api.put('/app/products/options', { units: [...o.units.map(({ value, label }: any) => ({ value, label })), { value: 'roll', label: 'Roll' }], gstRates: [0, 5, 1.5, 18, 18] })).data;
+  assert.ok(o.units.some((u: any) => u.value === 'roll'));
+  assert.deepEqual(o.gstRates.map((r: any) => r.rate), ['0', '1.5', '5', '18']);
+  const boxed = await api.post('/app/products', { name: 'Tape', sku: 'TAPE-1', unit: 'roll', salePricePaise: 4000, taxRate: 1.5 });
+  assert.equal(boxed.status, 201, JSON.stringify(boxed.data));
+  o = (await api.put('/app/products/options', { units: o.units.map(({ value, label }: any) => (value === 'roll' ? { value: 'rl', label: 'Roll (rl)' } : { value, label })), renameUnit: { from: 'roll', to: 'rl' } })).data;
+  assert.equal(o.units.find((u: any) => u.value === 'rl').products, 1);
+  assert.equal((await api.get('/app/products?search=Tape')).data.data[0].unit, 'rl');
+  assert.equal((await api.put('/app/products/options', { gstRates: [101] })).status, 400);
+
+  // Categories: rename, then delete (its products become uncategorised)
+  const cat = (await api.post('/app/categories', { name: 'Temp Shelf' })).data.category;
+  assert.equal((await api.put(`/app/categories/${cat.id}`, { name: 'Shelf A' })).status, 200);
+  assert.ok((await api.get('/app/categories')).data.data.some((c: any) => c.name === 'Shelf A'));
+  assert.equal((await api.del(`/app/categories/${cat.id}`)).status, 200);
+  assert.ok(!(await api.get('/app/categories')).data.data.some((c: any) => c.id === cat.id));
+});
+
 test('dashboard statistics are computed from stored records', async () => {
   const s = (await api.get('/app/business/stats')).data;
   assert.ok(s.today.invoices > 0);
@@ -331,3 +408,4 @@ test('unauthenticated requests are rejected', async () => {
   api.setToken('');
   assert.equal((await api.get('/app/products')).status, 401);
 });
+

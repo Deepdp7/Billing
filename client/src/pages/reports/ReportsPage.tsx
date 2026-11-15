@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { formatINR } from '../../lib/utils.js';
 import { ReportExplorer } from './ReportExplorer.js';
+import { useLiveRefresh } from '../../lib/live.js';
 import { 
   BarChart3, FileSpreadsheet, TrendingUp, TrendingDown, 
   DollarSign, Calculator, Download, RefreshCw 
@@ -21,8 +22,10 @@ export const ReportsPage: React.FC = () => {
   }, [fromDate, toDate]);
 
   // Loaded independently: a report not included in the license must not break the other one.
-  const loadReports = async () => {
-    setLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadReports(true); });
+  const loadReports = async (quiet?: unknown) => {
+    if (quiet !== true) setLoading(true);
     const range = { fromDate: fromDate || undefined, toDate: toDate || undefined };
     const [pnl, gst] = await Promise.allSettled([api.getProfitAndLoss(range), api.getGstSummary(range)]);
     setPnlData(pnl.status === 'fulfilled' ? pnl.value : null);

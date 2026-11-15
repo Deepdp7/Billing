@@ -1,5 +1,4 @@
 import { Response } from 'express';
-import ExcelJS from 'exceljs';
 import { localDate } from '../lib/dates.js';
 
 export interface Column {
@@ -37,6 +36,8 @@ export function toCsv(columns: Column[], rows: Record<string, any>[]): string {
 }
 
 export async function toXlsx(sheetName: string, columns: Column[], rows: Record<string, any>[]): Promise<Buffer> {
+  // Loaded on the first Excel export, not at start-up: exceljs and its zip libraries are the slowest part of starting
+  const { default: ExcelJS } = await import('exceljs');
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Apna Billing';
   wb.created = new Date();

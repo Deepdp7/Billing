@@ -1,6 +1,8 @@
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/connection.js';
+import { localDate } from '../../lib/dates.js';
+import { nextDocumentNumber } from '../../lib/numbering.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
 
 // ============================================================================
@@ -116,8 +118,7 @@ export function createBom(req: AuthenticatedRequest, res: Response): void {
   }
 
   // Generate unique BOM code
-  const countRow = db.prepare('SELECT COUNT(*) as count FROM bom_recipes WHERE business_id = ?').get(businessId) as { count: number };
-  const bomCode = `BOM-${String(countRow.count + 1).padStart(3, '0')}`;
+  const bomCode = nextDocumentNumber('bom_recipes', 'bom_code', businessId, 'BOM-', 1, 3);
   const bomId = uuidv4();
 
   const createBomTx = db.transaction(() => {
@@ -297,9 +298,9 @@ export function createProductionOrder(req: AuthenticatedRequest, res: Response):
   }
 
   // Generate order number
-  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const dateStr = localDate().replace(/-/g, '');
   const countRow = db.prepare(`
-    SELECT COUNT(*) as count FROM production_orders WHERE business_id = ? AND date(created_at) = date('now')
+    SELECT COUNT(*) as count FROM production_orders WHERE business_id = ? AND date(created_at, 'localtime') = date('now', 'localtime')
   `).get(businessId) as { count: number };
   const seq = String((countRow?.count || 0) + 1).padStart(3, '0');
   const orderNumber = `MFG-${dateStr}-${seq}`;
@@ -396,8 +397,8 @@ export function executeProductionRun(req: AuthenticatedRequest, res: Response): 
     `);
 
     const insertMovementStmt = db.prepare(`
-      INSERT INTO stock_movements (id, business_id, product_id, movement_type, quantity, reference_id, notes)
-      VALUES (?, ?, ?, 'MANUFACTURING_CONSUMPTION', ?, ?, ?)
+      INSERT INTO stock_movements (id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes)
+      VALUES (?, ?, ?, ?, (SELECT stock_quantity FROM products WHERE id = ?), ?, ?, ?)
     `);
 
     const insertMaterialLogStmt = db.prepare(`
@@ -422,7 +423,7 @@ export function executeProductionRun(req: AuthenticatedRequest, res: Response): 
 
       // Audit movement
       insertMovementStmt.run(
-        uuidv4(), businessId, itm.raw_material_id, -consumedQty, order.id,
+        uuidv4(), businessId, itm.raw_material_id, -consumedQty, itm.raw_material_id, 'MANUFACTURING_CONSUMPTION', order.id,
         `Consumed in Production Order ${order.order_number} (${order.finished_product_name})`
       );
 
@@ -442,7 +443,7 @@ export function executeProductionRun(req: AuthenticatedRequest, res: Response): 
 
     // Audit movement for finished goods
     insertMovementStmt.run(
-      uuidv4(), businessId, order.finished_product_id, finalYield, order.id,
+      uuidv4(), businessId, order.finished_product_id, finalYield, order.finished_product_id, 'MANUFACTURED', order.id,
       `Manufactured via Production Order ${order.order_number} (Batch ${order.batch_number})`
     );
 
@@ -457,7 +458,7 @@ export function executeProductionRun(req: AuthenticatedRequest, res: Response): 
       UPDATE production_orders SET
         status = 'COMPLETED',
         completed_quantity = ?,
-        completed_date = date('now'),
+        completed_date = date('now', 'localtime'),
         total_raw_material_cost_paise = ?,
         total_labor_cost_paise = ?,
         total_overhead_cost_paise = ?,

@@ -1,5 +1,7 @@
 # Apna Billing — how to run it (simple version)
 
+Step-by-step guide for building and pushing updates to clients: [UPDATE_GUIDE.md](UPDATE_GUIDE.md).
+
 ## What runs where
 
 | Piece | Where | Address |
@@ -55,6 +57,17 @@ that was not built and signed on your PC with your update key, so a wrong file c
 | Update the Admin Panel / license server on the VPS | `npm run deploy:server` | VPS password |
 
 The newest installer to give new clients is always in `releases\`.
+
+## Admin app on your own PC (optional)
+
+`npm run build:admin-app` makes `releases\ApnaBillingAdmin-<version>-setup.exe`: a desktop window with the same Admin
+Panel as https://72.61.231.155:7443 (it connects only to your VPS and trusts only its certificate). Install it on
+your PC only, never on a client's. `npm run dev:admin` is different: it shows the local test license server
+(`npm run dev:license`), not your real clients.
+
+Both setups (client and admin) are made by **Installer Studio** automatically during `npm run build` /
+`npm run build:admin-app` / `release`, from `deploy\installer-studio\*.isproj`. You can also open those projects in
+Installer Studio and press **Build installer**. Never change their hidden app ID.
 
 ## Giving the app to a client
 

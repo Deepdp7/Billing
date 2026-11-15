@@ -5,13 +5,17 @@ import { db } from '../db/connection.js';
 import { config } from '../config/index.js';
 import { getSchemaVersion, LATEST_SCHEMA_VERSION, backfillAfterRestore } from '../db/migrations.js';
 import { HttpError } from '../lib/http.js';
+import { currentShop } from '../db/shops.js';
 import { attachKeyForFile, databaseKey, encryptFileInPlace, isPlainSqliteFile, openBackupFile, SqliteDatabase } from '../db/sqlite.js';
+import { afterRestore, quietly } from '../sync/syncEngine.js';
 
-export type BackupKind = 'MANUAL' | 'AUTO' | 'PRE_MIGRATION' | 'PRE_RESTORE' | 'PRE_ERASE';
+export type BackupKind = 'MANUAL' | 'AUTO' | 'PRE_MIGRATION' | 'PRE_RESTORE' | 'PRE_ERASE' | 'PRE_SYNC';
 
 // Tables describing this installation (identity, license, backup log) are never overwritten by a restore.
 const RESTORE_EXCLUDED_TABLES = new Set([
-  'schema_migrations', 'license_state', 'backup_history', 'feature_usage', 'system_settings', 'sqlite_sequence',
+  'schema_migrations', 'license_state', 'account_sync', 'backup_history', 'feature_usage', 'system_settings', 'sqlite_sequence',
+  // This computer's place in the account's shared data
+  'sync_ctl', 'sync_outbox', 'sync_deltas', 'sync_state',
 ]);
 
 export function getSystemSetting(key: string, fallback: string): string {
@@ -28,7 +32,7 @@ export function setSystemSetting(key: string, value: string): void {
 
 export function getBackupSettings() {
   return {
-    backupDir: getSystemSetting('backup_dir', config.backupDir),
+    backupDir: getSystemSetting('backup_dir', currentShop().backupDir),
     autoBackupEnabled: getSystemSetting('auto_backup_enabled', '1') === '1',
     autoBackupIntervalHours: Number(getSystemSetting('auto_backup_interval_hours', '24')),
     keepAutoBackups: Number(getSystemSetting('keep_auto_backups', '14')),
@@ -103,7 +107,10 @@ export async function createBackup(opts: { kind: BackupKind; userId?: string | n
   const { backupDir } = getBackupSettings();
   fs.mkdirSync(backupDir, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const fileName = `apna-billing-${opts.kind.toLowerCase()}-${stamp}.db`;
+  // The business's name too: several businesses may share one backup folder
+  const name = (db.prepare('SELECT name FROM businesses ORDER BY created_at LIMIT 1').get() as { name?: string } | undefined)?.name || '';
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+  const fileName = `apna-billing-${slug ? `${slug}-` : ''}${opts.kind.toLowerCase()}-${stamp}.db`;
   const filePath = path.join(backupDir, fileName);
 
   db.prepare('VACUUM INTO ?').run(filePath);
@@ -197,7 +204,7 @@ export async function restoreFromFile(filePath: string, userId?: string | null) 
 
     db.pragma('foreign_keys = OFF');
     try {
-      const copy = db.transaction(() => {
+      const copy = db.transaction(() => quietly(() => {
         for (const t of tables) db.prepare(`DELETE FROM main."${t}"`).run();
         for (const t of tables) {
           if (!srcTables.has(t)) continue;
@@ -211,8 +218,9 @@ export async function restoreFromFile(filePath: string, userId?: string | null) 
         if (fkProblems.length > 0) {
           throw new HttpError(400, 'BACKUP_FK_VIOLATION', `Backup contains ${fkProblems.length} broken references; restore aborted.`);
         }
-      });
+      }));
       copy();
+      afterRestore();
     } finally {
       db.pragma('foreign_keys = ON');
     }

@@ -1,7 +1,13 @@
 import { Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../../db/connection.js';
+import { z } from 'zod';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
+import { parse, HttpError } from '../../lib/http.js';
+import { DATE_RE, localDate } from '../../lib/dates.js';
+import { nextDocumentNumber } from '../../lib/numbering.js';
+import { logAudit } from '../../services/auditService.js';
+import { applyCustomerAdvance } from '../../services/invoiceService.js';
 
 // ============================================================================
 // 1. SALES RETURNS (CREDIT NOTES / বিক্রয় ফেরত)
@@ -79,143 +85,187 @@ export function lookupInvoiceForReturn(req: AuthenticatedRequest, res: Response)
   });
 }
 
-export function createSalesReturn(req: AuthenticatedRequest, res: Response): void {
-  const businessId = req.businessId;
-  const userId = req.user?.userId;
+const optText = (max: number) => z.string().trim().max(max).optional().nullable();
+const returnItemSchema = z.object({
+  productId: z.string().max(64).optional().nullable(),
+  productName: z.string().trim().min(1, 'Item name is required').max(200),
+  sku: optText(64),
+  quantity: z.coerce.number().positive('Return quantity must be greater than zero').max(1_000_000),
+  unitPricePaise: z.coerce.number().int().nonnegative().default(0),
+  taxRate: z.coerce.number().min(0).max(100).default(0),
+});
+const CASH_REFUND_MODES = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER'] as const;
 
-  const {
-    invoiceId,
-    invoiceNumber,
-    customerId,
-    customerName = 'Walk-in Customer',
-    customerPhone = '',
-    items = [],
-    refundMode = 'CASH', // CASH, UPI, BANK_TRANSFER, STORE_CREDIT
-    reason = 'CUSTOMER_CHANGE_MIND',
-    notes = '',
-    returnDate,
-  } = req.body;
+const salesReturnSchema = z.object({
+  invoiceId: z.string().max(64).optional().nullable(),
+  invoiceNumber: optText(64),
+  customerId: z.string().max(64).optional().nullable(),
+  customerName: optText(150),
+  customerPhone: optText(20),
+  items: z.array(returnItemSchema).min(1, 'At least one return item is required').max(500),
+  refundMode: z.enum([...CASH_REFUND_MODES, 'STORE_CREDIT', 'ADJUST_BALANCE']).default('CASH'),
+  reason: optText(100),
+  notes: optText(1000),
+  returnDate: z.string().regex(DATE_RE, 'Date must be YYYY-MM-DD').optional().nullable(),
+});
 
-  if (!items.length) {
-    res.status(400).json({ code: 'BAD_REQUEST', message: 'At least one return item is required' });
-    return;
-  }
+const purchaseReturnSchema = z.object({
+  purchaseId: z.string().max(64).optional().nullable(),
+  purchaseNumber: optText(64),
+  supplierId: z.string().max(64).optional().nullable(),
+  supplierName: z.string().trim().min(1, 'Supplier name is required').max(150),
+  supplierPhone: optText(20),
+  items: z.array(returnItemSchema).min(1, 'At least one return item is required').max(500),
+  refundMode: z.enum(['ADJUST_PAYABLE', ...CASH_REFUND_MODES]).default('ADJUST_PAYABLE'),
+  reason: optText(100),
+  notes: optText(1000),
+  returnDate: z.string().regex(DATE_RE, 'Date must be YYYY-MM-DD').optional().nullable(),
+});
 
-  // Calculate next Credit Note number (e.g. CN-1001, CN-1002)
-  const existingCount = db.prepare('SELECT COUNT(*) as count FROM credit_notes WHERE business_id = ?').get(businessId) as any;
-  const creditNoteNumber = `CN-${1000 + (existingCount?.count || 0) + 1}`;
-  const creditNoteId = uuidv4();
-  const dateStr = returnDate || new Date().toISOString().split('T')[0];
+interface ReturnLine {
+  productId: string | null; productName: string; sku: string; quantity: number;
+  unitPricePaise: number; taxRate: number; subtotalPaise: number; taxPaise: number; totalPaise: number; restock: boolean;
+}
 
-  let subtotalPaise = 0;
-  let taxPaise = 0;
-
-  const processedItems = items.map((it: any) => {
-    const qty = Math.max(0.01, Number(it.quantity) || 1);
-    const unitPrice = Math.max(0, Math.round(Number(it.unitPricePaise) || 0));
-    const taxRate = Number(it.taxRate) || 0;
-    const lineSubtotal = Math.round(qty * unitPrice);
-    const lineTax = Math.round((lineSubtotal * taxRate) / 100);
-    const lineTotal = lineSubtotal + lineTax;
-
-    subtotalPaise += lineSubtotal;
-    taxPaise += lineTax;
-
+/** Lines typed by hand (no bill to return against): priced as entered, tax added on top. */
+function manualLines(businessId: string, items: z.infer<typeof returnItemSchema>[]): ReturnLine[] {
+  return items.map((it) => {
+    const product = it.productId
+      ? db.prepare('SELECT id, track_stock FROM products WHERE id = ? AND business_id = ?').get(it.productId, businessId) as any
+      : null;
+    const subtotal = Math.round(it.quantity * it.unitPricePaise);
+    const tax = Math.round((subtotal * it.taxRate) / 100);
     return {
-      id: uuidv4(),
-      productId: it.productId || null,
-      productName: it.productName,
-      sku: it.sku || '',
-      quantity: qty,
-      unitPricePaise: unitPrice,
-      taxRate,
-      taxPaise: lineTax,
-      totalPaise: lineTotal,
+      productId: product?.id ?? null, productName: it.productName, sku: it.sku || '', quantity: it.quantity,
+      unitPricePaise: it.unitPricePaise, taxRate: it.taxRate, subtotalPaise: subtotal, taxPaise: tax, totalPaise: subtotal + tax,
+      restock: product?.track_stock === 1,
     };
   });
+}
 
-  const totalRefundPaise = subtotalPaise + taxPaise;
+/**
+ * Lines returned against a bill: each one is matched to the bill's line and valued at what was actually charged for it
+ * (after discounts, with tax-inclusive prices split correctly), and never more than is left to return.
+ */
+function linesFromBill(
+  businessId: string, items: z.infer<typeof returnItemSchema>[],
+  billLines: Array<{ id: string; product_id: string | null; product_name: string; sku?: string; quantity: number; taxable: number; tax: number; tax_rate: number; returned: number }>,
+): ReturnLine[] {
+  const left = new Map(billLines.map((l) => [l.id, l.quantity - l.returned]));
+  return items.map((it) => {
+    const candidates = billLines.filter((l) => (it.productId && l.product_id === it.productId) || (!it.productId && l.product_name === it.productName));
+    const line = candidates.find((l) => (left.get(l.id) || 0) >= it.quantity - 1e-9) || candidates[0];
+    if (!line) throw new HttpError(400, 'NOT_ON_BILL', `${it.productName} is not on this bill`);
+    const remaining = left.get(line.id) || 0;
+    if (it.quantity > remaining + 1e-9) {
+      throw new HttpError(400, 'RETURN_TOO_MANY', `Only ${Number(remaining.toFixed(3))} of ${line.product_name} can still be returned`);
+    }
+    left.set(line.id, remaining - it.quantity);
+    const share = it.quantity / line.quantity;
+    const subtotal = Math.round(line.taxable * share);
+    const tax = Math.round(line.tax * share);
+    const product = line.product_id
+      ? db.prepare('SELECT id, track_stock FROM products WHERE id = ? AND business_id = ?').get(line.product_id, businessId) as any
+      : null;
+    return {
+      productId: product?.id ?? null, productName: line.product_name, sku: line.sku || it.sku || '', quantity: it.quantity,
+      unitPricePaise: Math.round(line.taxable / line.quantity), taxRate: line.tax_rate, subtotalPaise: subtotal, taxPaise: tax,
+      totalPaise: subtotal + tax, restock: product?.track_stock === 1,
+    };
+  });
+}
 
-  const transaction = db.transaction(() => {
-    // 1. Insert Credit Note Header
+export function createSalesReturn(req: AuthenticatedRequest, res: Response): void {
+  const businessId = req.businessId!;
+  const userId = req.user?.userId || null;
+  const input = parse(salesReturnSchema, req.body);
+  const dateStr = input.returnDate || localDate();
+
+  const result = db.transaction(() => {
+    let invoice: any = null;
+    let lines: ReturnLine[];
+    if (input.invoiceId) {
+      invoice = db.prepare('SELECT * FROM invoices WHERE id = ? AND business_id = ?').get(input.invoiceId, businessId);
+      if (!invoice) throw new HttpError(404, 'INVOICE_NOT_FOUND', 'Bill not found');
+      if (invoice.status !== 'ISSUED') throw new HttpError(409, 'NOT_RETURNABLE', 'Only issued bills can be returned (this one is cancelled or a draft)');
+      const billLines = (db.prepare(`
+        SELECT ii.id, ii.product_id, ii.product_name, ii.sku, ii.quantity, ii.tax_rate, ii.tax_paise AS tax,
+               CASE WHEN ii.taxable_paise > 0 THEN ii.taxable_paise ELSE ii.total_paise - ii.tax_paise END AS taxable,
+               COALESCE((SELECT SUM(cni.quantity) FROM credit_note_items cni JOIN credit_notes cn ON cn.id = cni.credit_note_id
+                         WHERE cn.invoice_id = ii.invoice_id AND cn.business_id = ii.business_id
+                           AND (cni.product_id = ii.product_id OR (cni.product_id IS NULL AND cni.product_name = ii.product_name))), 0) AS returned
+        FROM invoice_items ii WHERE ii.invoice_id = ? ORDER BY ii.rowid`).all(invoice.id)) as any[];
+      lines = linesFromBill(businessId, input.items, billLines);
+    } else {
+      lines = manualLines(businessId, input.items);
+    }
+
+    const customerId = invoice ? invoice.customer_id : input.customerId || null;
+    if (customerId && !db.prepare('SELECT 1 FROM customers WHERE id = ? AND business_id = ?').get(customerId, businessId)) {
+      throw new HttpError(400, 'CUSTOMER_NOT_FOUND', 'Selected customer does not exist');
+    }
+    const keepAsCredit = input.refundMode === 'STORE_CREDIT' || input.refundMode === 'ADJUST_BALANCE';
+    if (keepAsCredit && !customerId) {
+      throw new HttpError(400, 'CUSTOMER_REQUIRED', 'Store credit needs a saved customer. For a walk-in bill, give the refund in cash, UPI or card.');
+    }
+
+    const subtotal = lines.reduce((a, l) => a + l.subtotalPaise, 0);
+    const tax = lines.reduce((a, l) => a + l.taxPaise, 0);
+    const total = subtotal + tax;
+    const number = nextDocumentNumber('credit_notes', 'credit_note_number', businessId, 'CN-', 1001);
+    const id = uuidv4();
     db.prepare(`
-      INSERT INTO credit_notes (
-        id, business_id, credit_note_number, invoice_id, invoice_number,
-        customer_id, customer_name, customer_phone, return_date,
-        subtotal_paise, tax_paise, total_refund_paise, refund_mode,
-        reason, notes, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `).run(
-      creditNoteId, businessId, creditNoteNumber, invoiceId || null, invoiceNumber || 'MANUAL',
-      customerId || null, customerName, customerPhone, dateStr,
-      subtotalPaise, taxPaise, totalRefundPaise, refundMode,
-      reason, notes, userId || null
-    );
+      INSERT INTO credit_notes (id, business_id, credit_note_number, invoice_id, invoice_number, customer_id, customer_name, customer_phone,
+                                return_date, subtotal_paise, tax_paise, total_refund_paise, refund_mode, reason, notes, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(id, businessId, number, invoice?.id ?? null, invoice?.invoice_number ?? (input.invoiceNumber || 'MANUAL'), customerId,
+      invoice?.customer_name ?? (input.customerName || 'Walk-in Customer'), invoice?.customer_phone ?? (input.customerPhone || ''),
+      dateStr, subtotal, tax, total, input.refundMode, input.reason || 'CUSTOMER_CHANGE_MIND', input.notes || '', userId);
 
-    // 2. Insert Credit Note Items & Restock Products
-    const insertItem = db.prepare(`
-      INSERT INTO credit_note_items (
-        id, business_id, credit_note_id, product_id, product_name, sku,
-        quantity, unit_price_paise, tax_rate, tax_paise, total_paise
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    const insertItem = db.prepare(`INSERT INTO credit_note_items (id, business_id, credit_note_id, product_id, product_name, sku, quantity,
+                                     unit_price_paise, tax_rate, tax_paise, total_paise) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (const l of lines) {
+      insertItem.run(uuidv4(), businessId, id, l.productId, l.productName, l.sku, l.quantity, l.unitPricePaise, l.taxRate, l.taxPaise, l.totalPaise);
+      if (!l.restock || !l.productId) continue;
+      db.prepare("UPDATE products SET stock_quantity = stock_quantity + ?, updated_at = datetime('now') WHERE id = ? AND business_id = ?")
+        .run(l.quantity, l.productId, businessId);
+      db.prepare(`INSERT INTO stock_movements (id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes, created_at)
+                  VALUES (?, ?, ?, ?, (SELECT stock_quantity FROM products WHERE id = ?), 'RETURN', ?, ?, datetime('now'))`)
+        .run(uuidv4(), businessId, l.productId, l.quantity, l.productId, id, `Sales return ${number}${invoice ? ` (bill ${invoice.invoice_number})` : ''}`);
+    }
 
-    const restockProduct = db.prepare(`
-      UPDATE products 
-      SET stock_quantity = stock_quantity + ?, updated_at = datetime('now')
-      WHERE id = ? AND business_id = ?
-    `);
-
-    const recordMovement = db.prepare(`
-      INSERT INTO stock_movements (
-        id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes, created_at
-      ) VALUES (?, ?, ?, ?, (SELECT stock_quantity FROM products WHERE id = ?), 'RETURN', ?, ?, datetime('now'))
-    `);
-
-    for (const item of processedItems) {
-      insertItem.run(
-        item.id, businessId, creditNoteId, item.productId, item.productName, item.sku,
-        item.quantity, item.unitPricePaise, item.taxRate, item.taxPaise, item.totalPaise
-      );
-
-      if (item.productId) {
-        restockProduct.run(item.quantity, item.productId, businessId);
-        recordMovement.run(
-          uuidv4(), businessId, item.productId, item.quantity, item.productId,
-          creditNoteId, `Sales Return Credit Note ${creditNoteNumber} (Inv: ${invoiceNumber})`
-        );
+    // What the bill still owes is settled first; only the rest is given back (or kept as the customer's credit)
+    let settled = 0;
+    if (invoice) {
+      settled = Math.min(total, Math.max(0, invoice.total_paise - invoice.amount_paid_paise));
+      if (settled > 0) {
+        const paid = invoice.amount_paid_paise + settled;
+        db.prepare("UPDATE invoices SET amount_paid_paise = ?, payment_status = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(paid, paid >= invoice.total_paise ? 'PAID' : 'PARTIAL', invoice.id);
       }
     }
-
-    // 3. Customer Ledger Reversal / Store Credit
-    if (customerId && (refundMode === 'STORE_CREDIT' || refundMode === 'ADJUST_BALANCE')) {
-      db.prepare(`
-        UPDATE customers 
-        SET outstanding_balance_paise = outstanding_balance_paise - ?, updated_at = datetime('now')
-        WHERE id = ? AND business_id = ?
-      `).run(totalRefundPaise, customerId, businessId);
+    const rest = total - settled;
+    const lowerBalance = settled + (keepAsCredit ? rest : 0);
+    if (customerId && lowerBalance > 0) {
+      db.prepare("UPDATE customers SET outstanding_balance_paise = outstanding_balance_paise - ?, updated_at = datetime('now') WHERE id = ? AND business_id = ?")
+        .run(lowerBalance, customerId, businessId);
     }
+    if (!keepAsCredit && rest > 0) {
+      db.prepare(`INSERT INTO payments (id, business_id, invoice_id, customer_id, amount_paise, payment_mode, reference_number, notes, direction, payment_date, status, created_by, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'OUT', ?, 'ACTIVE', ?, datetime('now'))`)
+        .run(uuidv4(), businessId, invoice?.id ?? null, customerId, rest, input.refundMode, number, `Refund for sales return ${number}`, dateStr, userId);
+    }
+    if (keepAsCredit) applyCustomerAdvance(businessId, customerId);
+    return { id, number, total, settled, refunded: keepAsCredit ? 0 : rest };
+  })();
 
-    // 4. Audit Trail
-    db.prepare(`
-      INSERT INTO audit_logs (id, business_id, user_id, action, entity_type, entity_id, details_json, created_at)
-      VALUES (?, ?, ?, 'CREATE_SALES_RETURN', 'CREDIT_NOTE', ?, ?, datetime('now'))
-    `).run(
-      uuidv4(), businessId, userId || null, creditNoteId,
-      JSON.stringify({ creditNoteNumber, invoiceNumber, totalRefundPaise, refundMode, itemsCount: processedItems.length })
-    );
-  });
-
-  try {
-    transaction();
-    const createdNote = db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(creditNoteId);
-    res.status(201).json({
-      message: `Sales return ${creditNoteNumber} processed successfully and inventory restocked`,
-      data: createdNote,
-    });
-  } catch (err: any) {
-    res.status(500).json({ code: 'TRANSACTION_FAILED', message: err.message });
-  }
+  logAudit({ businessId, userId, action: 'CREATE_SALES_RETURN', entityType: 'CREDIT_NOTE', entityId: result.id,
+    details: { creditNoteNumber: result.number, invoiceNumber: input.invoiceNumber, totalRefundPaise: result.total, refundMode: input.refundMode,
+      settledOnBillPaise: result.settled, refundedPaise: result.refunded } });
+  const parts = [`Sales return ${result.number} saved and stock updated`];
+  if (result.settled > 0) parts.push(`₹${(result.settled / 100).toFixed(2)} taken off what the bill still owed`);
+  if (result.refunded > 0) parts.push(`refund ₹${(result.refunded / 100).toFixed(2)} by ${input.refundMode.replace('_', ' ')}`);
+  res.status(201).json({ message: parts.join('; '), data: db.prepare('SELECT * FROM credit_notes WHERE id = ?').get(result.id) });
 }
 
 export function getSalesReturnById(req: AuthenticatedRequest, res: Response): void {
@@ -324,141 +374,91 @@ export function lookupPurchaseForReturn(req: AuthenticatedRequest, res: Response
 }
 
 export function createPurchaseReturn(req: AuthenticatedRequest, res: Response): void {
-  const businessId = req.businessId;
-  const userId = req.user?.userId;
+  const businessId = req.businessId!;
+  const userId = req.user?.userId || null;
+  const input = parse(purchaseReturnSchema, req.body);
+  const dateStr = input.returnDate || localDate();
 
-  const {
-    purchaseId,
-    purchaseNumber,
-    supplierId,
-    supplierName,
-    supplierPhone = '',
-    items = [],
-    refundMode = 'ADJUST_PAYABLE', // ADJUST_PAYABLE, CASH, BANK_TRANSFER
-    reason = 'DAMAGED_GOODS',
-    notes = '',
-    returnDate,
-  } = req.body;
-
-  if (!supplierName || !items.length) {
-    res.status(400).json({ code: 'BAD_REQUEST', message: 'Supplier name and return items are required' });
-    return;
-  }
-
-  // Calculate next Debit Note number (e.g. DN-1001)
-  const existingCount = db.prepare('SELECT COUNT(*) as count FROM debit_notes WHERE business_id = ?').get(businessId) as any;
-  const debitNoteNumber = `DN-${1000 + (existingCount?.count || 0) + 1}`;
-  const debitNoteId = uuidv4();
-  const dateStr = returnDate || new Date().toISOString().split('T')[0];
-
-  let subtotalPaise = 0;
-  let taxPaise = 0;
-
-  const processedItems = items.map((it: any) => {
-    const qty = Math.max(0.01, Number(it.quantity) || 1);
-    const unitPrice = Math.max(0, Math.round(Number(it.unitPricePaise) || 0));
-    const taxRate = Number(it.taxRate) || 0;
-    const lineSubtotal = Math.round(qty * unitPrice);
-    const lineTax = Math.round((lineSubtotal * taxRate) / 100);
-    const lineTotal = lineSubtotal + lineTax;
-
-    subtotalPaise += lineSubtotal;
-    taxPaise += lineTax;
-
-    return {
-      id: uuidv4(),
-      productId: it.productId || null,
-      productName: it.productName,
-      quantity: qty,
-      unitPricePaise: unitPrice,
-      taxRate,
-      taxPaise: lineTax,
-      totalPaise: lineTotal,
-    };
-  });
-
-  const totalPaise = subtotalPaise + taxPaise;
-
-  const transaction = db.transaction(() => {
-    // 1. Insert Debit Note
-    db.prepare(`
-      INSERT INTO debit_notes (
-        id, business_id, debit_note_number, purchase_id, purchase_number,
-        supplier_id, supplier_name, supplier_phone, return_date,
-        subtotal_paise, tax_paise, total_paise, refund_mode,
-        reason, notes, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `).run(
-      debitNoteId, businessId, debitNoteNumber, purchaseId || null, purchaseNumber || 'MANUAL',
-      supplierId || null, supplierName, supplierPhone, dateStr,
-      subtotalPaise, taxPaise, totalPaise, refundMode,
-      reason, notes, userId || null
-    );
-
-    // 2. Insert Debit Note Items & Deduct Stock from Warehouse
-    const insertItem = db.prepare(`
-      INSERT INTO debit_note_items (
-        id, business_id, debit_note_id, product_id, product_name,
-        quantity, unit_price_paise, tax_rate, tax_paise, total_paise
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const deductProduct = db.prepare(`
-      UPDATE products 
-      SET stock_quantity = stock_quantity - ?, updated_at = datetime('now')
-      WHERE id = ? AND business_id = ?
-    `);
-
-    const recordMovement = db.prepare(`
-      INSERT INTO stock_movements (
-        id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes, created_at
-      ) VALUES (?, ?, ?, ?, (SELECT stock_quantity FROM products WHERE id = ?), 'PURCHASE_RETURN', ?, ?, datetime('now'))
-    `);
-
-    for (const item of processedItems) {
-      insertItem.run(
-        item.id, businessId, debitNoteId, item.productId, item.productName,
-        item.quantity, item.unitPricePaise, item.taxRate, item.taxPaise, item.totalPaise
-      );
-
-      if (item.productId) {
-        deductProduct.run(item.quantity, item.productId, businessId);
-        recordMovement.run(
-          uuidv4(), businessId, item.productId, -item.quantity, item.productId,
-          debitNoteId, `Purchase Return Debit Note ${debitNoteNumber} to ${supplierName} (Pur: ${purchaseNumber})`
-        );
-      }
+  const result = db.transaction(() => {
+    let purchase: any = null;
+    let lines: ReturnLine[];
+    if (input.purchaseId) {
+      purchase = db.prepare('SELECT * FROM purchase_invoices WHERE id = ? AND business_id = ?').get(input.purchaseId, businessId);
+      if (!purchase) throw new HttpError(404, 'PURCHASE_NOT_FOUND', 'Purchase bill not found');
+      const billLines = (db.prepare(`
+        SELECT pi.id, pi.product_id, pi.product_name, pi.quantity, pi.tax_rate, pi.tax_paise AS tax, pi.total_paise - pi.tax_paise AS taxable,
+               COALESCE((SELECT SUM(dni.quantity) FROM debit_note_items dni JOIN debit_notes dn ON dn.id = dni.debit_note_id
+                         WHERE dn.purchase_id = pi.purchase_id AND dn.business_id = pi.business_id
+                           AND (dni.product_id = pi.product_id OR (dni.product_id IS NULL AND dni.product_name = pi.product_name))), 0) AS returned
+        FROM purchase_items pi WHERE pi.purchase_id = ? ORDER BY pi.rowid`).all(purchase.id)) as any[];
+      lines = linesFromBill(businessId, input.items, billLines);
+    } else {
+      lines = manualLines(businessId, input.items);
     }
 
-    // 3. Adjust Supplier Payable
-    if (supplierId && refundMode === 'ADJUST_PAYABLE') {
-      db.prepare(`
-        UPDATE suppliers 
-        SET outstanding_balance_paise = outstanding_balance_paise - ?, updated_at = datetime('now')
-        WHERE id = ? AND business_id = ?
-      `).run(totalPaise, supplierId, businessId);
+    const supplierId = purchase ? purchase.supplier_id : input.supplierId || null;
+    if (supplierId && !db.prepare('SELECT 1 FROM suppliers WHERE id = ? AND business_id = ?').get(supplierId, businessId)) {
+      throw new HttpError(400, 'SUPPLIER_NOT_FOUND', 'Selected supplier does not exist');
+    }
+    const adjust = input.refundMode === 'ADJUST_PAYABLE';
+    const subtotal = lines.reduce((a, l) => a + l.subtotalPaise, 0);
+    const tax = lines.reduce((a, l) => a + l.taxPaise, 0);
+    const total = subtotal + tax;
+    // What the bill still owes the supplier is reduced first; the rest is money the supplier gives back (or owes us)
+    const settled = purchase ? Math.min(total, Math.max(0, purchase.total_paise - purchase.amount_paid_paise)) : 0;
+    const rest = total - settled;
+    if (adjust && rest > 0 && !supplierId) {
+      throw new HttpError(400, 'SUPPLIER_REQUIRED', 'To adjust the payable, pick a saved supplier, or record the money as received back');
     }
 
-    // 4. Audit Trail
+    const number = nextDocumentNumber('debit_notes', 'debit_note_number', businessId, 'DN-', 1001);
+    const id = uuidv4();
     db.prepare(`
-      INSERT INTO audit_logs (id, business_id, user_id, action, entity_type, entity_id, details_json, created_at)
-      VALUES (?, ?, ?, 'CREATE_PURCHASE_RETURN', 'DEBIT_NOTE', ?, ?, datetime('now'))
-    `).run(
-      uuidv4(), businessId, userId || null, debitNoteId,
-      JSON.stringify({ debitNoteNumber, purchaseNumber, totalPaise, refundMode, itemsCount: processedItems.length })
-    );
-  });
+      INSERT INTO debit_notes (id, business_id, debit_note_number, purchase_id, purchase_number, supplier_id, supplier_name, supplier_phone,
+                               return_date, subtotal_paise, tax_paise, total_paise, refund_mode, reason, notes, created_by, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(id, businessId, number, purchase?.id ?? null, purchase?.purchase_number ?? (input.purchaseNumber || 'MANUAL'), supplierId,
+      purchase?.supplier_name ?? input.supplierName, input.supplierPhone || '', dateStr, subtotal, tax, total, input.refundMode,
+      input.reason || 'DAMAGED_GOODS', input.notes || '', userId);
 
-  try {
-    transaction();
-    const createdNote = db.prepare('SELECT * FROM debit_notes WHERE id = ?').get(debitNoteId);
-    res.status(201).json({
-      message: `Purchase return ${debitNoteNumber} recorded and inventory deducted successfully`,
-      data: createdNote,
-    });
-  } catch (err: any) {
-    res.status(500).json({ code: 'TRANSACTION_FAILED', message: err.message });
-  }
+    const insertItem = db.prepare(`INSERT INTO debit_note_items (id, business_id, debit_note_id, product_id, product_name, quantity,
+                                     unit_price_paise, tax_rate, tax_paise, total_paise) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    for (const l of lines) {
+      insertItem.run(uuidv4(), businessId, id, l.productId, l.productName, l.quantity, l.unitPricePaise, l.taxRate, l.taxPaise, l.totalPaise);
+      if (!l.restock || !l.productId) continue;
+      db.prepare("UPDATE products SET stock_quantity = stock_quantity - ?, updated_at = datetime('now') WHERE id = ? AND business_id = ?")
+        .run(l.quantity, l.productId, businessId);
+      db.prepare(`INSERT INTO stock_movements (id, business_id, product_id, change_quantity, resulting_quantity, movement_type, reference_id, notes, created_at)
+                  VALUES (?, ?, ?, ?, (SELECT stock_quantity FROM products WHERE id = ?), 'PURCHASE_RETURN', ?, ?, datetime('now'))`)
+        .run(uuidv4(), businessId, l.productId, -l.quantity, l.productId, id,
+          `Purchase return ${number} to ${purchase?.supplier_name ?? input.supplierName}${purchase ? ` (bill ${purchase.purchase_number})` : ''}`);
+    }
+
+    if (settled > 0) {
+      const paid = purchase.amount_paid_paise + settled;
+      db.prepare('UPDATE purchase_invoices SET amount_paid_paise = ?, payment_status = ? WHERE id = ?')
+        .run(paid, paid >= purchase.total_paise ? 'PAID' : 'PARTIAL', purchase.id);
+    }
+    const lowerPayable = settled + (adjust ? rest : 0);
+    if (supplierId && lowerPayable > 0) {
+      db.prepare("UPDATE suppliers SET outstanding_balance_paise = outstanding_balance_paise - ?, updated_at = datetime('now') WHERE id = ? AND business_id = ?")
+        .run(lowerPayable, supplierId, businessId);
+    }
+    if (!adjust && rest > 0) {
+      db.prepare(`INSERT INTO payments (id, business_id, supplier_id, purchase_id, amount_paise, payment_mode, reference_number, notes, direction, payment_date, status, created_by, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'IN', ?, 'ACTIVE', ?, datetime('now'))`)
+        .run(uuidv4(), businessId, supplierId, purchase?.id ?? null, rest, input.refundMode, number, `Money back for purchase return ${number}`, dateStr, userId);
+    }
+    return { id, number, total, settled, received: adjust ? 0 : rest };
+  })();
+
+  logAudit({ businessId, userId, action: 'CREATE_PURCHASE_RETURN', entityType: 'DEBIT_NOTE', entityId: result.id,
+    details: { debitNoteNumber: result.number, purchaseNumber: input.purchaseNumber, totalPaise: result.total, refundMode: input.refundMode,
+      settledOnBillPaise: result.settled, receivedPaise: result.received } });
+  const parts = [`Purchase return ${result.number} saved and stock updated`];
+  if (result.settled > 0) parts.push(`₹${(result.settled / 100).toFixed(2)} taken off what you owed on the bill`);
+  if (result.received > 0) parts.push(`₹${(result.received / 100).toFixed(2)} to receive back by ${input.refundMode.replace('_', ' ')}`);
+  res.status(201).json({ message: parts.join('; '), data: db.prepare('SELECT * FROM debit_notes WHERE id = ?').get(result.id) });
 }
 
 export function getPurchaseReturnById(req: AuthenticatedRequest, res: Response): void {

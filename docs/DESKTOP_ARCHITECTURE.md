@@ -17,16 +17,19 @@ code stays TypeScript and the work went into *how it is shipped and what guards 
 ## 2. What ships now
 
 ```
-<install>\                         (%LOCALAPPDATA%\Apna Billing, per-user, no admin rights)
+<install>\                         (%LOCALAPPDATA%\Programs\Apna Billing, per-user, no admin rights)
   Apna Billing.exe                 Tauri shell (Rust): window, updater, engine launcher, integrity check, data key
   engine\
-    apna-billing-engine.exe        sealed engine: Node runtime + the whole local server (bundled, minified, V8 code
-                                   cache) + the built UI, embedded as executable assets
-    native\better_sqlite3.node     SQLite with encryption (SQLite3 Multiple Ciphers, ChaCha20-Poly1305), Node-API
-    native\apna_core.node          licensing core, Rust (native/apna-core)
+    apna-billing-engine.exe        sealed engine: the whole local server (bundled, minified, V8 code cache) + the
+                                   built UI, embedded as executable assets
+    native\apna-storage.dll        SQLite with encryption (SQLite3 Multiple Ciphers, ChaCha20-Poly1305)
+    native\apna-core.dll           licensing core, Rust (native/apna-core)
     license-ca.crt                 public certificate of the license server (not secret)
   uninstall.exe
 ```
+
+The two compiled modules are Node-API native libraries shipped as ordinary `.dll` files; the engine loads them by
+file path (`process.dlopen`), so no `.node` files or `node_modules` are installed.
 
 No `.js`, `node_modules`, source maps or client files are installed; the build refuses to package any.
 
@@ -104,16 +107,44 @@ key as release builds).
 | `%USERPROFILE%\.apna-billing\updater.key` | installed apps can never be updated again |
 | `license-server/keys/signing-private.pem` | licenses cannot be issued |
 
-## 4. Installer and uninstaller (NSIS, per-user)
+## 4. Installers (Installer Studio, per-user)
 
-* One small wizard, no admin rights, Start-menu/desktop shortcuts, LZMA-compressed, app icon.
-* `tauri/src-tauri/installer-hooks.nsh`: before installing, stops a running engine and removes the 1.1.x
-  `app\` folder (old Node runtime + JavaScript); on uninstall, stops the engine and removes `engine\`.
-* Updates (in-app "Install now") run the same installer passively; 1.1.x apps update to 1.2 the usual way.
-* Uninstall never deletes `%APPDATA%\ApnaBilling` (bills, backups). The "Delete the application data" box only
-  removes WebView cache. Remove the data folder by hand if a shop really wants everything gone.
+Both apps are installed by setups made with **Installer Studio** (`C:\Users\ARITRA\Desktop\InstallerStudio`, an
+NSIS wizard builder) from the projects in `deploy/installer-studio/`:
+
+| Project | Program folder (made by the build) | Setup |
+|---|---|---|
+| `Apna Billing.isproj` | `releases/ApnaBilling-files` (`Apna Billing.exe` + `engine\`) | `releases/ApnaBilling-<version>-setup.exe` + `.sig` |
+| `Apna Billing Admin.isproj` | `releases/ApnaBillingAdmin-files` (`Apna Billing Admin.exe`) | `releases/ApnaBillingAdmin-<version>-setup.exe` |
+
+`python deploy/apna_vps.py build` / `release` / `admin-app` run Installer Studio from the command line
+(`installer-studio build <project>`), filling in version, folders and branding pictures; the client setup is then
+signed with the update key (`tauri signer sign`), which in-app updates require. **Never change a project's
+`appId`**: it is how a newer setup finds and replaces the installed version.
+
+* Wizard with the brand pictures (`branding/installer/<app>/`), no admin rights, installs into
+  `%LOCALAPPDATA%\Programs\<app>`, Start-menu and desktop shortcuts, "Start <app>" at the end.
+* Closes the running app and its engine first; a newer setup removes the older version with its own uninstaller.
+* In-app updates ("Install now") download the signed setup and run it as `/P /UPDATE /R`: progress bar only, then
+  the app starts again (passive mode and `/R` were added to Installer Studio for this).
+* **Moving from the 1.1.x / 1.2.0 Tauri installer:** both projects set "Replaces an installation made by another
+  installer" to that installer's Add/Remove Programs entry (`Apna Billing`, `Apna Billing Admin`). The first
+  Installer Studio setup removes the old copy silently with its own uninstaller (files, shortcuts, entry), then
+  installs, so no PC keeps two copies.
+* **Deletion protection (client only):** the client project sets "Protect installed files", so the installer denies
+  the Windows *Users* group Delete rights over `%LOCALAPPDATA%\Programs\Apna Billing`. A shop employee cannot delete
+  the program by dragging it to the Recycle Bin or with `del` — it fails with "access denied", so casual tampering
+  cannot break billing. The uninstaller lifts the lock before removing the files, so proper removal still works, and
+  an administrator can always recover with `icacls "%LOCALAPPDATA%\Programs\Apna Billing" /reset /T /C`. It is not
+  unbreakable (an admin with elevation or another OS can override); it stops accidental and casual deletion. The
+  admin app is left unprotected (it runs on your own PC). The lock is re-applied across updates and gone after
+  uninstall.
+* Uninstall removes exactly the installed files, shortcuts and entry; it never deletes `%APPDATA%\ApnaBilling`
+  (bills, backups). Remove that folder by hand if a shop really wants everything gone.
+* `tauri build` still makes Tauri's own NSIS setup (with `installer-hooks.nsh`) under `target/`; it is no longer
+  given out.
 
 ### Code signing (recommended next step)
 Unsigned executables trigger SmartScreen. With an OV/EV certificate, set `bundle > windows > certificateThumbprint`
-(or a `signCommand`) in `tauri.conf.json`, and sign `engine\apna-billing-engine.exe` and the two `.node` files in
+(or a `signCommand`) in `tauri.conf.json`, and sign `engine\apna-billing-engine.exe` and the two `.dll` files in
 `prepare.cjs` **before** the manifest is written (the shell checks hashes of the signed files).

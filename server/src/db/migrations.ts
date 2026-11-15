@@ -279,6 +279,103 @@ export const MIGRATIONS: Migration[] = [
       backfillAfterRestore(db);
     },
   },
+  {
+    version: 3,
+    name: 'return_refunds_in_cash_book',
+    up: (db) => {
+      // Looked up on every sale (duplicate-checkout guard) and every bill opened; both scanned the whole table
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_invoices_request ON invoices(business_id, client_request_id);
+        CREATE INDEX IF NOT EXISTS idx_invoice_items_invoice ON invoice_items(invoice_id);
+        CREATE INDEX IF NOT EXISTS idx_credit_note_items_note ON credit_note_items(credit_note_id);
+        CREATE INDEX IF NOT EXISTS idx_payments_reference ON payments(business_id, reference_number);
+      `);
+      // Returns refunded in cash / UPI / bank used to leave no trace in the cash book. Statements now show every
+      // credit / debit note, so add the matching refund row for those made before.
+      db.exec(`
+        INSERT INTO payments (id, business_id, invoice_id, customer_id, amount_paise, payment_mode, reference_number, notes, direction, payment_date, status, created_at)
+        SELECT lower(hex(randomblob(16))), cn.business_id, cn.invoice_id, cn.customer_id, cn.total_refund_paise, cn.refund_mode,
+               cn.credit_note_number, 'Refund for sales return ' || cn.credit_note_number, 'OUT', cn.return_date, 'ACTIVE', cn.created_at
+        FROM credit_notes cn
+        WHERE cn.refund_mode NOT IN ('STORE_CREDIT', 'ADJUST_BALANCE') AND cn.total_refund_paise > 0
+          AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.business_id = cn.business_id AND p.reference_number = cn.credit_note_number);
+        INSERT INTO payments (id, business_id, supplier_id, purchase_id, amount_paise, payment_mode, reference_number, notes, direction, payment_date, status, created_at)
+        SELECT lower(hex(randomblob(16))), dn.business_id, dn.supplier_id, dn.purchase_id, dn.total_paise, dn.refund_mode,
+               dn.debit_note_number, 'Money back for purchase return ' || dn.debit_note_number, 'IN', dn.return_date, 'ACTIVE', dn.created_at
+        FROM debit_notes dn
+        WHERE dn.refund_mode <> 'ADJUST_PAYABLE' AND dn.total_paise > 0
+          AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.business_id = dn.business_id AND p.reference_number = dn.debit_note_number);
+      `);
+    },
+  },
+  {
+    version: 4,
+    name: 'account_sync',
+    up: (db) => {
+      // The owner's sign-in as last set on this computer, until the vendor's server has it (sent = 1), and the last
+      // change from the vendor (Admin Panel or a password reset) this computer has taken over (applied_rev)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS account_sync (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          user_id TEXT,
+          email TEXT,
+          password TEXT,
+          source TEXT,
+          sent INTEGER NOT NULL DEFAULT 0,
+          applied_rev INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT
+        );
+      `);
+    },
+  },
+  {
+    version: 5,
+    name: 'sync',
+    up: (db) => {
+      // Sync with the account's other computers (sync/syncEngine.ts). Triggers note every changed row in sync_outbox
+      // and every change of a stock / balance counter in sync_deltas; both are emptied once the vendor's server has
+      // them. sync_ctl.applying is 1 while changes from elsewhere are written (they are not sent back).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_ctl (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          applying INTEGER NOT NULL DEFAULT 0,
+          ver INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT OR IGNORE INTO sync_ctl (id) VALUES (1);
+        CREATE TABLE IF NOT EXISTS sync_outbox (
+          tbl TEXT NOT NULL,
+          pk TEXT NOT NULL,
+          ver INTEGER NOT NULL,
+          PRIMARY KEY (tbl, pk)
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_outbox_ver ON sync_outbox(ver);
+        CREATE TABLE IF NOT EXISTS sync_deltas (
+          id TEXT PRIMARY KEY,
+          tbl TEXT NOT NULL,
+          pk TEXT NOT NULL,
+          col TEXT NOT NULL,
+          delta REAL NOT NULL,
+          ver INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_deltas_row ON sync_deltas(tbl, pk);
+        CREATE INDEX IF NOT EXISTS idx_sync_deltas_ver ON sync_deltas(ver);
+        CREATE TABLE IF NOT EXISTS sync_state (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          joined INTEGER NOT NULL DEFAULT 0,
+          business_id TEXT,
+          epoch INTEGER NOT NULL DEFAULT 0,
+          cursor INTEGER NOT NULL DEFAULT 0,
+          device_no INTEGER NOT NULL DEFAULT 0,
+          is_primary INTEGER NOT NULL DEFAULT 1,
+          reset_pending INTEGER NOT NULL DEFAULT 0,
+          last_push_at TEXT,
+          last_pull_at TEXT,
+          last_error TEXT
+        );
+        INSERT OR IGNORE INTO sync_state (id) VALUES (1);
+      `);
+    },
+  },
 ];
 
 /**

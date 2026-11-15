@@ -6,13 +6,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Apna Billing - Next-generation modular SaaS billing, inventory, POS and management platform for retail, restaurant, pharmacy and enterprise businesses." />
     <title>Apna Billing | All-in-One Business Billing & Management</title>
-    <!-- Google Fonts: Inter & Outfit -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Fonts are bundled (src/main.tsx). The right theme and background are set before the first paint, and #root
+         shows the same start screen as the desktop window until the app is ready: no white flash. -->
+    <script>
+      // The desktop app hands over the theme it saved on disk (<html data-apna-theme>); a browser uses localStorage
+      try { if ((document.documentElement.dataset.apnaTheme || localStorage.getItem('apna_billing_theme')) === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
+      // The desktop app asks for the sign-in every time it is opened: a new start (this window's sessionStorage is still
+      // empty) forgets the last start's sign-ins. Reloads within the same start keep them; the theme etc. stay.
+      try {
+        if (window.__TAURI_INTERNALS__ && !sessionStorage.getItem('apna_started')) {
+          localStorage.removeItem('apna_billing_token');
+          localStorage.removeItem('apna_billing_sessions');
+          sessionStorage.setItem('apna_started', '1');
+        }
+      } catch (e) {}
+    </script>
+    <style>
+      html, body { background: #eef3f0; }
+      html.dark, html.dark body { background: #1e1e21; }
+      .boot { position: fixed; inset: 0; display: grid; place-items: center; font: 15px "Segoe UI", system-ui, sans-serif; color: #0f172a; }
+      html.dark .boot { color: #f1f5f9; }
+      .boot div { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+      .boot img { width: 88px; height: 88px; filter: drop-shadow(0 10px 18px rgba(5, 150, 105, .25)); }
+      .boot b { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+      .boot span { width: 140px; height: 3px; border-radius: 3px; background: #e2e8f0; overflow: hidden; }
+      html.dark .boot span { background: #343439; }
+      .boot i { display: block; width: 40%; height: 100%; border-radius: 3px; background: #10b981; animation: boot 1s ease-in-out infinite; }
+      @keyframes boot { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+    </style>
   </head>
   <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 font-sans antialiased selection:bg-emerald-500 selection:text-white">
-    <div id="root"></div>
+    <div id="root"><div class="boot"><div><img src="/app-icon.png" alt=""><b>Apna Billing</b><span><i></i></span></div></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

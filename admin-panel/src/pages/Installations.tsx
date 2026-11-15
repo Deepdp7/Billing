@@ -6,13 +6,14 @@ import { Alert, Badge, Button, Card, Input, PageHeader, Select, Table, fmtAgo, f
 import { FeatureMatrix } from '../components/FeatureMatrix';
 import { licenseStatusCell } from './Licenses';
 import { promptDialog } from '../components/dialogs';
+import { DeleteDeviceButton, deviceStatusCell } from '../components/DeviceControls';
 
 export function InstallationsPage() {
   const { nav } = useApp();
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [seen, setSeen] = useState('');
-  const { data, error } = useAsync(() => get(`/installations${qs({ search, status, seenWithinDays: seen })}`), [search, status, seen]);
+  const { data, error, reload } = useAsync(() => get(`/installations${qs({ search, status, seenWithinDays: seen })}`), [search, status, seen]);
   return (
     <div>
       <PageHeader title="Installations / Devices" subtitle="Every computer running Apna Billing" actions={<>
@@ -28,10 +29,11 @@ export function InstallationsPage() {
         { key: 'app_version', label: 'Version' },
         { key: 'license_type', label: 'License', render: (r) => <span className="inline-flex gap-1"><Badge value={r.license_type} /><span>{r.plan_name}</span></span> },
         { key: 'license_status', label: 'License status', render: (r) => licenseStatusCell({ effective_status: r.license_effective_status, expires_at: r.expires_at }) },
-        { key: 'status', label: 'Device', render: (r) => <span className="inline-flex gap-1"><Badge value={r.status} />{r.force_revalidate && <Badge value="REVALIDATE" />}</span> },
+        { key: 'status', label: 'Device', render: deviceStatusCell },
         { key: 'installed_at', label: 'Installed', render: (r) => fmtDate(r.installed_at) },
         { key: 'expires_at', label: 'Expires', render: (r) => (r.expires_at ? fmtDate(r.expires_at) : 'Lifetime') },
         { key: 'last_verified_at', label: 'Last verified', render: (r) => fmtAgo(r.last_verified_at) },
+        { key: 'delete', label: '', render: (r) => <DeleteDeviceButton device={r} onDeleted={reload} /> },
       ]} />
     </div>
   );
@@ -67,11 +69,15 @@ export function InstallationDetail({ id }: { id: string }) {
             {can('SUPPORT') && !i.force_revalidate && <Button disabled={busy} onClick={() => act('force-revalidate', 'Force daily revalidation')}>Force revalidation</Button>}
             {can('SUPPORT') && i.force_revalidate && <Button disabled={busy} onClick={() => act('clear-revalidate', 'Clear forced revalidation')}>Clear revalidation</Button>}
             {can('ADMIN') && <Button disabled={busy} onClick={() => act('rotate-credentials', 'Rotate device credentials')}>Rotate credentials</Button>}
+            <DeleteDeviceButton device={i} label onDeleted={() => nav('installations')} />
           </>} />
+          {i.uninstalled_at && (
+            <Alert>Apna Billing was uninstalled from this computer on {fmtDate(i.uninstalled_at, true)}. Its device slot is free; delete it to remove it from the list.</Alert>
+          )}
           <div className="grid md:grid-cols-3 gap-3">
             <Card title="Device">
               <dl className="text-xs grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
-                <dt className="text-slate-500">Status</dt><dd><Badge value={i.status} /></dd>
+                <dt className="text-slate-500">Status</dt><dd>{deviceStatusCell(i)}</dd>
                 <dt className="text-slate-500">OS</dt><dd>{i.os}</dd>
                 <dt className="text-slate-500">App version</dt><dd>{i.app_version}</dd>
                 <dt className="text-slate-500">Installed</dt><dd>{fmtDate(i.installed_at, true)}</dd>

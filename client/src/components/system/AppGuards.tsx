@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { WifiOff, Loader2, DownloadCloud, Sparkles } from 'lucide-react';
-import { useLicense } from '../../context/LicenseContext.js';
+import { useLicense, versionLabel } from '../../context/LicenseContext.js';
 import { api } from '../../lib/api.js';
 import { desktop, isDesktopApp } from '../../lib/desktop.js';
 
@@ -121,7 +121,7 @@ export function UpdatePrompt() {
               {required ? 'Update required' : 'Update available'}
             </h2>
             <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-              Version {update.latestVersion} · you have {license?.appVersion}
+              Version {versionLabel(update.latestVersion)} · you have {versionLabel(license?.appVersion)}
             </p>
             <p className="mt-3 text-sm text-slate-700 dark:text-slate-200 whitespace-pre-line">
               {update.message || 'A new version of Apna Billing is ready.'}

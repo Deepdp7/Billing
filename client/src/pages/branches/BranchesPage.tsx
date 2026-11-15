@@ -11,6 +11,7 @@ import {
 import { confirmDialog, showAlert } from '../../components/ui/dialogs.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const BranchesPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'branches' | 'transfers'>('branches');
   
@@ -53,8 +54,10 @@ export const BranchesPage: React.FC = () => {
     loadAll();
   }, [transferStatusFilter, transferSearch]);
 
-  const loadAll = async () => {
-    setLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadAll(true); });
+  const loadAll = async (quiet?: unknown) => {
+    if (quiet !== true) setLoading(true);
     try {
       const [branchRes, transRes, prodRes] = await Promise.all([
         api.getBranches(),

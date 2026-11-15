@@ -6,6 +6,8 @@ import { DATE_RE, localDate, addDays } from '../lib/dates.js';
 import { calculateInvoice, CalculationError } from './invoiceCalculator.js';
 import { getBusinessSettings } from './settingsService.js';
 import { logAudit } from './auditService.js';
+import { seriesTag } from '../sync/syncEngine.js';
+import { nextDocumentNumber } from '../lib/numbering.js';
 
 export const PAYMENT_MODES = ['CASH', 'UPI', 'CARD', 'BANK_TRANSFER', 'CHEQUE', 'WALLET'] as const;
 export type PaymentMode = typeof PAYMENT_MODES[number];
@@ -175,6 +177,12 @@ function prepare(businessId: string, input: CreateInvoiceInput) {
 }
 
 function nextInvoiceNumber(businessId: string): string {
+  // A second computer of the same account numbers its own series (INV-B1001, …): never the same number as another
+  const tag = seriesTag();
+  if (tag) {
+    const b = db.prepare('SELECT invoice_prefix FROM businesses WHERE id = ?').get(businessId) as { invoice_prefix: string } | undefined;
+    return nextDocumentNumber('invoices', 'invoice_number', businessId, b?.invoice_prefix ?? 'INV-', 1001);
+  }
   const exists = db.prepare('SELECT 1 FROM invoices WHERE business_id = ? AND invoice_number = ?');
   const bump = db.prepare("UPDATE businesses SET next_invoice_number = next_invoice_number + 1, updated_at = datetime('now') WHERE id = ?");
   // Skip numbers already used (e.g. after the prefix was changed back), never reuse one.
@@ -324,6 +332,8 @@ function createInternal(businessId: string, userId: string | null, input: Create
         db.prepare('UPDATE invoices SET loyalty_points_earned = ? WHERE id = ?').run(earned, id);
       }
     }
+    // An advance the customer already has pays this bill
+    if (balanceDue > 0) applyCustomerAdvance(businessId, p.customer.id);
   }
 
   return id;
@@ -416,7 +426,15 @@ export function deleteInvoice(businessId: string, userId: string | null, id: str
     deleteDraft(businessId, userId, id);
     return;
   }
-  db.prepare('DELETE FROM invoices WHERE id = ? AND business_id = ?').run(id, businessId);
+  db.transaction(() => {
+    // Money that moved (the payment, its refund) really happened: keep those rows in the cash book and the
+    // customer's statement. Only the bill itself goes; otherwise its cascade would erase them.
+    db.prepare(`UPDATE payments SET invoice_id = NULL, reference_number = COALESCE(NULLIF(reference_number, ''), ?)
+                WHERE invoice_id = ? AND business_id = ?`).run(inv.invoice_number, id, businessId);
+    // Its points were earned and then reversed when it was cancelled: together they are nothing, so both go
+    db.prepare('DELETE FROM loyalty_transactions WHERE invoice_id = ? AND business_id = ?').run(id, businessId);
+    db.prepare('DELETE FROM invoices WHERE id = ? AND business_id = ?').run(id, businessId);
+  })();
   logAudit({ businessId, userId, action: 'INVOICE_DELETED', entityType: 'INVOICE', entityId: id,
     details: { number: inv.invoice_number, status: inv.status } });
 }
@@ -450,7 +468,7 @@ export function duplicateInvoice(businessId: string, userId: string | null, id: 
 }
 
 const cancelSchema = z.object({
-  reason: z.string().trim().min(3, 'Please give a cancellation reason').max(500),
+  reason: z.string().trim().max(500).optional(),
   refundMode: z.enum([...PAYMENT_MODES, 'CUSTOMER_CREDIT'] as [string, ...string[]]).optional(),
 });
 
@@ -470,7 +488,7 @@ export function cancelInvoice(businessId: string, userId: string | null, id: str
 
   db.transaction(() => {
     db.prepare(`UPDATE invoices SET status = 'CANCELLED', cancelled_at = datetime('now'), cancel_reason = ?, cancelled_by = ?, updated_at = datetime('now')
-                WHERE id = ?`).run(reason, userId, id);
+                WHERE id = ?`).run(reason || null, userId, id);
 
     const items = db.prepare(`SELECT ii.*, p.track_stock FROM invoice_items ii LEFT JOIN products p ON p.id = ii.product_id
                               WHERE ii.invoice_id = ?`).all(id) as any[];
@@ -507,10 +525,12 @@ export function cancelInvoice(businessId: string, userId: string | null, id: str
                   VALUES (?, ?, ?, 'MANUAL_ADJUSTMENT', ?, ?, ?, ?)`)
         .run(crypto.randomUUID(), businessId, inv.customer_id, delta, bal, id, `Reversed on cancellation of ${inv.invoice_number}`);
     }
+    // Money kept as the customer's advance pays their other open bills
+    applyCustomerAdvance(businessId, inv.customer_id);
   })();
 
   logAudit({ businessId, userId, action: 'INVOICE_CANCELLED', entityType: 'INVOICE', entityId: id,
-    details: { number: inv.invoice_number, reason, totalPaise: inv.total_paise, refundedPaise: inv.amount_paid_paise, refundMode: mode } });
+    details: { number: inv.invoice_number, reason: reason || null, totalPaise: inv.total_paise, refundedPaise: inv.amount_paid_paise, refundMode: mode } });
   return getInvoiceFull(businessId, id);
 }
 
@@ -538,6 +558,31 @@ export function recordInvoicePayment(businessId: string, userId: string | null, 
   logAudit({ businessId, userId, action: 'PAYMENT_RECEIVED', entityType: 'INVOICE', entityId: id,
     details: { number: invoice.invoice_number, amountPaise: input.amountPaise, mode: input.mode } });
   return invoice;
+}
+
+/**
+ * Keep a customer's bills in step with their balance. Their balance is what all open bills still owe, minus any money
+ * of theirs the shop holds (an advance, store credit, a bill cancelled without refund, a credit adjustment). When both
+ * exist, that money settles the oldest open bills, so a bill never shows as unpaid while the customer owes nothing.
+ * No payment rows are added: the money was recorded when it came in. Must run inside a transaction.
+ */
+export function applyCustomerAdvance(businessId: string, customerId: string | null | undefined) {
+  if (!customerId) return;
+  const customer = db.prepare('SELECT outstanding_balance_paise FROM customers WHERE id = ? AND business_id = ?').get(customerId, businessId) as any;
+  if (!customer) return;
+  const open = db.prepare(`SELECT id, total_paise, amount_paid_paise FROM invoices
+                           WHERE customer_id = ? AND business_id = ? AND status = 'ISSUED' AND amount_paid_paise < total_paise
+                           ORDER BY invoice_date ASC, created_at ASC`).all(customerId, businessId) as any[];
+  const owedOnBills = open.reduce((sum, i) => sum + (i.total_paise - i.amount_paid_paise), 0);
+  let credit = owedOnBills - customer.outstanding_balance_paise;
+  for (const i of open) {
+    if (credit <= 0) break;
+    const portion = Math.min(credit, i.total_paise - i.amount_paid_paise);
+    const paid = i.amount_paid_paise + portion;
+    db.prepare("UPDATE invoices SET amount_paid_paise = ?, payment_status = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(paid, paid >= i.total_paise ? 'PAID' : 'PARTIAL', i.id);
+    credit -= portion;
+  }
 }
 
 /** Shared by invoice payments and customer on-account allocation. Must run inside a transaction. */

@@ -10,6 +10,8 @@ exports.deleteCustomer = deleteCustomer;
 exports.getCustomerById = getCustomerById;
 exports.getCustomerLedger = getCustomerLedger;
 exports.receiveCustomerPayment = receiveCustomerPayment;
+exports.refundCustomerAdvance = refundCustomerAdvance;
+exports.voidCustomerPayment = voidCustomerPayment;
 exports.exportCustomers = exportCustomers;
 const crypto_1 = __importDefault(require("crypto"));
 const zod_1 = require("zod");
@@ -43,8 +45,9 @@ function getCustomers(req, res) {
     const page = Math.max(1, Number(req.query.page) || 1);
     const conditions = ['business_id = ?'];
     const params = [req.businessId];
+    // A customer who owes money, or whose money the shop holds, always shows (even when made inactive)
     if (includeInactive !== 'true')
-        conditions.push('is_active = 1');
+        conditions.push('(is_active = 1 OR outstanding_balance_paise != 0)');
     if (withBalance === 'true')
         conditions.push('outstanding_balance_paise > 0');
     if (search) {
@@ -103,7 +106,10 @@ function deleteCustomer(req, res) {
     if (!cust)
         throw new http_js_1.HttpError(404, 'NOT_FOUND', 'Customer not found');
     if (cust.outstanding_balance_paise !== 0) {
-        throw new http_js_1.HttpError(409, 'HAS_BALANCE', `Customer has a balance of ₹${(cust.outstanding_balance_paise / 100).toFixed(2)}. Settle it first.`);
+        const amount = `₹${(Math.abs(cust.outstanding_balance_paise) / 100).toFixed(2)}`;
+        throw new http_js_1.HttpError(409, 'HAS_BALANCE', cust.outstanding_balance_paise > 0
+            ? `${cust.name} still owes you ${amount}. Receive the payment first (₹ button), then delete.`
+            : `You hold ${amount} of ${cust.name}'s money as advance. Return it first (₹ button), then delete.`);
     }
     const history = connection_js_1.db.prepare(`SELECT
       (SELECT COUNT(*) FROM invoices WHERE customer_id = ?) +
@@ -145,24 +151,24 @@ function getCustomerLedger(req, res) {
     const biz = req.businessId;
     const entries = connection_js_1.db.prepare(`
     SELECT invoice_date AS date, created_at, 'INVOICE' AS type, invoice_number AS reference, total_paise AS debit, 0 AS credit,
-           'Sale invoice' AS description
+           'Sale invoice' AS description, NULL AS payment_id
       FROM invoices WHERE customer_id = ? AND business_id = ? AND status IN ('ISSUED', 'CANCELLED')
     UNION ALL
-    SELECT date(cancelled_at) AS date, cancelled_at, 'CANCELLATION', invoice_number, 0, total_paise, 'Invoice cancelled: ' || COALESCE(cancel_reason, '')
+    SELECT date(cancelled_at) AS date, cancelled_at, 'CANCELLATION', invoice_number, 0, total_paise, 'Invoice cancelled: ' || COALESCE(cancel_reason, ''), NULL
       FROM invoices WHERE customer_id = ? AND business_id = ? AND status = 'CANCELLED'
     UNION ALL
     SELECT p.payment_date, p.created_at, CASE p.direction WHEN 'IN' THEN 'PAYMENT' ELSE 'REFUND' END,
            COALESCE(i.invoice_number, p.reference_number),
            CASE p.direction WHEN 'OUT' THEN p.amount_paise ELSE 0 END,
            CASE p.direction WHEN 'IN' THEN p.amount_paise ELSE 0 END,
-           p.payment_mode || COALESCE(' — ' || p.notes, '')
+           p.payment_mode || COALESCE(' — ' || p.notes, ''), CASE p.direction WHEN 'IN' THEN p.id END
       FROM payments p LEFT JOIN invoices i ON i.id = p.invoice_id
       WHERE p.customer_id = ? AND p.business_id = ? AND p.status = 'ACTIVE'
     UNION ALL
-    SELECT return_date, created_at, 'CREDIT_NOTE', credit_note_number, 0, total_refund_paise, 'Sales return (' || refund_mode || ')'
-      FROM credit_notes WHERE customer_id = ? AND business_id = ? AND refund_mode IN ('STORE_CREDIT', 'ADJUST_BALANCE')
+    SELECT return_date, created_at, 'CREDIT_NOTE', credit_note_number, 0, total_refund_paise, 'Sales return (' || refund_mode || ')', NULL
+      FROM credit_notes WHERE customer_id = ? AND business_id = ?
     UNION ALL
-    SELECT date(created_at), created_at, 'ADJUSTMENT', reference_no, debit_paise, credit_paise, COALESCE(notes, entry_type)
+    SELECT date(created_at), created_at, 'ADJUSTMENT', reference_no, debit_paise, credit_paise, COALESCE(notes, entry_type), NULL
       FROM party_ledger_entries WHERE customer_id = ? AND business_id = ?
     ORDER BY 1 ASC, 2 ASC
   `).all(id, biz, id, biz, id, biz, id, biz, id, biz);
@@ -219,6 +225,68 @@ function receiveCustomerPayment(req, res) {
         details: { amountPaise: input.amountPaise, mode: input.mode, allocations, advancePaise: advance } });
     const customer = connection_js_1.db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
     res.status(201).json({ message: 'Payment recorded', allocations, advancePaise: advance, customer });
+}
+/** Give back a customer's advance (money they paid that no bill uses): a refund paid out, which settles the account. */
+function refundCustomerAdvance(req, res) {
+    const input = (0, http_js_1.parse)(accountPaymentSchema, req.body);
+    const userId = req.user?.userId || null;
+    connection_js_1.db.transaction(() => {
+        const customer = connection_js_1.db.prepare('SELECT * FROM customers WHERE id = ? AND business_id = ?').get(req.params.id, req.businessId);
+        if (!customer)
+            throw new http_js_1.HttpError(404, 'NOT_FOUND', 'Customer not found');
+        const advance = -customer.outstanding_balance_paise;
+        if (advance <= 0)
+            throw new http_js_1.HttpError(400, 'NO_ADVANCE', `${customer.name} has no advance to return`);
+        if (input.amountPaise > advance) {
+            throw new http_js_1.HttpError(400, 'MORE_THAN_ADVANCE', `You can return at most ₹${(advance / 100).toFixed(2)}, the advance ${customer.name} has with you`);
+        }
+        connection_js_1.db.prepare(`INSERT INTO payments (id, business_id, invoice_id, customer_id, amount_paise, payment_mode, reference_number, notes, direction, payment_date, status, created_by, created_at)
+                VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'OUT', ?, 'ACTIVE', ?, datetime('now'))`)
+            .run(crypto_1.default.randomUUID(), req.businessId, customer.id, input.amountPaise, input.mode, input.reference || null, input.notes || 'Advance returned to customer', input.paymentDate || (0, dates_js_1.localDate)(), userId);
+        connection_js_1.db.prepare("UPDATE customers SET outstanding_balance_paise = outstanding_balance_paise + ?, updated_at = datetime('now') WHERE id = ?")
+            .run(input.amountPaise, customer.id);
+    })();
+    (0, auditService_js_1.logAudit)({ businessId: req.businessId, userId, action: 'CUSTOMER_ADVANCE_REFUNDED', entityType: 'CUSTOMER', entityId: req.params.id,
+        details: { amountPaise: input.amountPaise, mode: input.mode } });
+    res.status(201).json({ message: 'Advance returned', customer: connection_js_1.db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id) });
+}
+/**
+ * Undo a payment entered by mistake: it is cancelled (kept on record, out of every total) and the balance goes back.
+ * A payment on a bill makes that bill owe it again; an advance can be undone only while the shop still holds it.
+ */
+function voidCustomerPayment(req, res) {
+    const userId = req.user?.userId || null;
+    const payment = connection_js_1.db.transaction(() => {
+        const customer = connection_js_1.db.prepare('SELECT * FROM customers WHERE id = ? AND business_id = ?').get(req.params.id, req.businessId);
+        if (!customer)
+            throw new http_js_1.HttpError(404, 'NOT_FOUND', 'Customer not found');
+        const p = connection_js_1.db.prepare("SELECT * FROM payments WHERE id = ? AND customer_id = ? AND business_id = ? AND direction = 'IN'")
+            .get(req.params.paymentId, customer.id, req.businessId);
+        if (!p)
+            throw new http_js_1.HttpError(404, 'NOT_FOUND', 'Payment not found');
+        if (p.status !== 'ACTIVE')
+            throw new http_js_1.HttpError(409, 'ALREADY_UNDONE', 'This payment was already undone');
+        if (p.invoice_id) {
+            const inv = connection_js_1.db.prepare('SELECT * FROM invoices WHERE id = ? AND business_id = ?').get(p.invoice_id, req.businessId);
+            if (inv?.status === 'CANCELLED')
+                throw new http_js_1.HttpError(409, 'BILL_CANCELLED', 'The bill was cancelled; its payment was settled then');
+            if (inv) {
+                const paid = Math.max(0, inv.amount_paid_paise - p.amount_paise);
+                connection_js_1.db.prepare("UPDATE invoices SET amount_paid_paise = ?, payment_status = ?, updated_at = datetime('now') WHERE id = ?")
+                    .run(paid, paid >= inv.total_paise ? 'PAID' : paid > 0 ? 'PARTIAL' : 'UNPAID', inv.id);
+            }
+        }
+        else if (p.amount_paise > -customer.outstanding_balance_paise) {
+            throw new http_js_1.HttpError(409, 'ADVANCE_USED', `Only ₹${(Math.max(0, -customer.outstanding_balance_paise) / 100).toFixed(2)} of this advance is still unused; the rest already paid bills`);
+        }
+        connection_js_1.db.prepare("UPDATE payments SET status = 'VOID', notes = COALESCE(notes, '') || ' (undone)' WHERE id = ?").run(p.id);
+        connection_js_1.db.prepare("UPDATE customers SET outstanding_balance_paise = outstanding_balance_paise + ?, updated_at = datetime('now') WHERE id = ?")
+            .run(p.amount_paise, customer.id);
+        return p;
+    })();
+    (0, auditService_js_1.logAudit)({ businessId: req.businessId, userId, action: 'CUSTOMER_PAYMENT_UNDONE', entityType: 'CUSTOMER', entityId: req.params.id,
+        details: { paymentId: payment.id, amountPaise: payment.amount_paise, mode: payment.payment_mode } });
+    res.json({ message: 'Payment undone', customer: connection_js_1.db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id) });
 }
 function exportCustomers(req, res) {
     const rows = connection_js_1.db.prepare(`SELECT name, phone, email, gstin, billing_address, shipping_address, city, state, pincode, customer_type,

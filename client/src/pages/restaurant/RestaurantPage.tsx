@@ -3,6 +3,7 @@ import { api } from '../../lib/api.js';
 import { UtensilsCrossed, Plus, Clock, Check, Users, ChefHat, X } from 'lucide-react';
 import { showAlert } from '../../components/ui/dialogs.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const RestaurantPage: React.FC = () => {
   const [tables, setTables] = useState<any[]>([]);
   const [kots, setKots] = useState<any[]>([]);
@@ -15,7 +16,9 @@ export const RestaurantPage: React.FC = () => {
     loadRestaurantData();
   }, []);
 
-  const loadRestaurantData = async () => {
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadRestaurantData(true); });
+  const loadRestaurantData = async (quiet?: unknown) => {
     try {
       const [tRes, kRes] = await Promise.all([
         api.getRestaurantTables(),

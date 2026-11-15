@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
+import { desktop } from './lib/desktop';
 
 export type Theme = 'light' | 'dark';
 const KEY = 'apna_admin_theme';
@@ -11,7 +12,10 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType>({ theme: 'light', setTheme: () => {} });
 
+/** The Admin app hands over the theme it saved on disk (<html data-apna-theme>); a browser uses its own storage */
 export function readTheme(): Theme {
+  const saved = document.documentElement.dataset.apnaTheme;
+  if (saved === 'dark' || saved === 'light') return saved;
   try {
     return localStorage.getItem(KEY) === 'dark' ? 'dark' : 'light';
   } catch {
@@ -21,7 +25,9 @@ export function readTheme(): Theme {
 
 export function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle('dark', theme === 'dark');
+  document.documentElement.dataset.apnaTheme = theme;
   try { localStorage.setItem(KEY, theme); } catch { /* private mode */ }
+  desktop.saveTheme(theme);
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {

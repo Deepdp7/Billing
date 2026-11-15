@@ -94,12 +94,13 @@ fs.mkdirSync(buildDir, { recursive: true });
 
 // ---------------------------------------------------------------- native modules
 
+// The compiled modules ship as ordinary .dll files (loaded by file path with process.dlopen), not .node files.
 step('Building the licensing core (Rust)');
 run('cargo build --release --locked', path.join(root, 'native', 'apna-core'));
-fs.copyFileSync(path.join(root, 'native', 'apna-core', 'target', 'release', 'apna_core.dll'), path.join(engineDir, 'native', 'apna_core.node'));
+fs.copyFileSync(path.join(root, 'native', 'apna-core', 'target', 'release', 'apna_core.dll'), path.join(engineDir, 'native', 'apna-core.dll'));
 fs.copyFileSync(
   path.join(root, 'server', 'node_modules', 'better-sqlite3-multiple-ciphers', 'prebuilds', 'win32-x64.node'),
-  path.join(engineDir, 'native', 'better_sqlite3.node'),
+  path.join(engineDir, 'native', 'apna-storage.dll'),
 );
 
 // ---------------------------------------------------------------- sealed engine

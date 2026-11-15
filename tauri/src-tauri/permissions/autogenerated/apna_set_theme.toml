@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-apna-set-theme"
+description = "Enables the apna_set_theme command without any pre-configured scope."
+commands.allow = ["apna_set_theme"]
+
+[[permission]]
+identifier = "deny-apna-set-theme"
+description = "Denies the apna_set_theme command without any pre-configured scope."
+commands.deny = ["apna_set_theme"]

@@ -9,8 +9,10 @@ import {
   Coins, FileText, Calendar, Building, HelpCircle 
 } from 'lucide-react';
 import { showAlert } from '../../components/ui/dialogs.js';
+import { findProductByCode, scanBeep, useScanner } from '../../lib/scanner.js';
 import { Select } from '../../components/ui/Select.js';
 
+import { useLiveRefresh } from '../../lib/live.js';
 export const ReturnsRefundsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'sales' | 'purchases'>('sales');
   
@@ -40,6 +42,8 @@ export const ReturnsRefundsPage: React.FC = () => {
     returnQty: number;
     unitPricePaise: number;
     taxRate: number;
+    lineTaxablePaise?: number;
+    lineTaxPaise?: number;
   }>>([]);
   const [salesRefundMode, setSalesRefundMode] = useState<'CASH' | 'UPI' | 'BANK_TRANSFER' | 'STORE_CREDIT'>('CASH');
   const [salesReason, setSalesReason] = useState<string>('CUSTOMER_CHANGE_MIND');
@@ -58,6 +62,8 @@ export const ReturnsRefundsPage: React.FC = () => {
     returnQty: number;
     unitPricePaise: number;
     taxRate: number;
+    lineTaxablePaise?: number;
+    lineTaxPaise?: number;
   }>>([]);
   const [purRefundMode, setPurRefundMode] = useState<'ADJUST_PAYABLE' | 'CASH' | 'BANK_TRANSFER'>('ADJUST_PAYABLE');
   const [purReason, setPurReason] = useState<string>('DAMAGED_GOODS');
@@ -67,8 +73,10 @@ export const ReturnsRefundsPage: React.FC = () => {
     loadData();
   }, [search]);
 
-  const loadData = async () => {
-    setLoading(true);
+  // Another computer of this account changed something: the lists reload quietly
+  useLiveRefresh(() => { void loadData(true); });
+  const loadData = async (quiet?: unknown) => {
+    if (quiet !== true) setLoading(true);
     try {
       const [salesRes, purRes] = await Promise.all([
         api.getSalesReturns({ search: search || undefined }),
@@ -89,15 +97,15 @@ export const ReturnsRefundsPage: React.FC = () => {
   };
 
   // Lookup Invoice for Sales Return
-  const handleLookupInvoice = async () => {
-    if (!invSearchQuery.trim()) return;
+  const handleLookupInvoice = async (query: string = invSearchQuery) => {
+    if (!query.trim()) return;
     setLookupLoading(true);
     setLookupError('');
     setLookedUpInvoice(null);
     setSalesReturnItems([]);
 
     try {
-      const res = await api.lookupInvoiceForReturn(invSearchQuery.trim());
+      const res = await api.lookupInvoiceForReturn(query.trim());
       const { invoice, items } = res.data;
       setLookedUpInvoice(invoice);
       setSalesReturnItems(
@@ -108,7 +116,10 @@ export const ReturnsRefundsPage: React.FC = () => {
           soldQty: it.quantity,
           availableQty: it.availableQty,
           returnQty: 0, // default 0 to let merchant pick
-          unitPricePaise: it.unit_price_paise,
+          // What was actually charged for the line (after discounts; tax-inclusive prices split), as the refund uses
+          lineTaxablePaise: it.taxable_paise > 0 ? it.taxable_paise : it.total_paise - it.tax_paise,
+          lineTaxPaise: it.tax_paise,
+          unitPricePaise: Math.round((it.taxable_paise > 0 ? it.taxable_paise : it.total_paise - it.tax_paise) / (it.quantity || 1)),
           taxRate: it.tax_rate,
         }))
       );
@@ -120,6 +131,25 @@ export const ReturnsRefundsPage: React.FC = () => {
   };
 
   // Lookup Purchase for Purchase Return
+  // Scans: the bill's barcode finds the bill; then each item scanned counts one more as returned
+  useScanner((code) => {
+    if (isSalesModalOpen && lookedUpInvoice && salesReturnItems.length) {
+      void (async () => {
+        const prod = await findProductByCode(code).catch(() => null);
+        const idx = prod ? salesReturnItems.findIndex((it) => it.productId === prod.id && it.returnQty < it.availableQty) : -1;
+        scanBeep(idx >= 0);
+        if (idx < 0) { showAlert(prod ? `No more ${prod.name} left to return on this bill` : `${code} is not on this bill`); return; }
+        setSalesReturnItems((items) => items.map((it, i) => (i === idx ? { ...it, returnQty: it.returnQty + 1 } : it)));
+      })();
+      return true;
+    }
+    scanBeep(true);
+    setIsSalesModalOpen(true);
+    setInvSearchQuery(code);
+    void handleLookupInvoice(code);
+    return true;
+  });
+
   const handleLookupPurchase = async () => {
     if (!purSearchQuery.trim()) return;
     setPurLookupLoading(true);
@@ -138,6 +168,8 @@ export const ReturnsRefundsPage: React.FC = () => {
           purchasedQty: it.quantity,
           availableQty: it.availableQty,
           returnQty: 0,
+          lineTaxablePaise: it.total_paise - it.tax_paise,
+          lineTaxPaise: it.tax_paise,
           unitPricePaise: it.unit_price_paise,
           taxRate: it.tax_rate,
         }))
@@ -265,8 +297,7 @@ export const ReturnsRefundsPage: React.FC = () => {
 
   // Active sales return summary calculations
   const salesSummary = salesReturnItems.reduce((acc, it) => {
-    const lineSubtotal = it.returnQty * it.unitPricePaise;
-    const lineTax = Math.round((lineSubtotal * it.taxRate) / 100);
+    const { subtotal: lineSubtotal, tax: lineTax } = returnAmounts(it, it.soldQty);
     return {
       subtotal: acc.subtotal + lineSubtotal,
       tax: acc.tax + lineTax,
@@ -276,8 +307,7 @@ export const ReturnsRefundsPage: React.FC = () => {
 
   // Active purchase return summary calculations
   const purSummary = purReturnItems.reduce((acc, it) => {
-    const lineSubtotal = it.returnQty * it.unitPricePaise;
-    const lineTax = Math.round((lineSubtotal * it.taxRate) / 100);
+    const { subtotal: lineSubtotal, tax: lineTax } = returnAmounts(it, it.purchasedQty);
     return {
       subtotal: acc.subtotal + lineSubtotal,
       tax: acc.tax + lineTax,
@@ -662,7 +692,7 @@ export const ReturnsRefundsPage: React.FC = () => {
                 />
                 <button
                   type="button"
-                  onClick={handleLookupInvoice}
+                  onClick={() => handleLookupInvoice()}
                   disabled={lookupLoading}
                   className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50"
                 >
@@ -1147,3 +1177,13 @@ export const ReturnsRefundsPage: React.FC = () => {
     </div>
   );
 };
+
+/** A returned line's value, worked out as the server does: a share of what the bill charged for that line. */
+function returnAmounts(it: { returnQty: number; unitPricePaise: number; taxRate: number; lineTaxablePaise?: number; lineTaxPaise?: number }, billedQty: number) {
+  if (it.lineTaxablePaise !== undefined && billedQty > 0) {
+    const share = it.returnQty / billedQty;
+    return { subtotal: Math.round(it.lineTaxablePaise * share), tax: Math.round((it.lineTaxPaise || 0) * share) };
+  }
+  const subtotal = Math.round(it.returnQty * it.unitPricePaise);
+  return { subtotal, tax: Math.round((subtotal * it.taxRate) / 100) };
+}

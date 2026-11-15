@@ -4,8 +4,9 @@
  * scripts/prepare.cjs). Debug builds of the shell run it with "node" straight from the repository.
  *
  * Protocol with the shell:
- *   stdin, first line   JSON {"dbKey": "<64 hex>"}: the database key, never passed through the environment
- *   stdout              "APNA_PORT=<n>" once the API listens on 127.0.0.1:<n>
+ *   stdin, first line   JSON {"dbKey": "<64 hex>", "uninstall"?: true}: the database key, never passed through the
+ *                       environment; "uninstall" (the uninstaller) only tells the vendor's server and exits
+ *   stdout              "APNA_PORT=<n>" once the API listens on 127.0.0.1:<n>; "APNA_UNINSTALLED=<n>" after the report
  *   stdin closes        the shell went away: exit, so no orphan server is left behind
  * Data dir, license server URL and app version come from the environment the shell sets.
  */
@@ -70,9 +71,19 @@ readHandshake().then((handshake) => {
     nativeDir: sealed ? path.join(path.dirname(process.execPath), 'native') : undefined,
     sealed,
   });
-  return require('../../server/dist/index.js').startServer(0);
-}).then(({ port }) => {
-  console.log(`APNA_PORT=${port}`);
+  if (handshake.uninstall) {
+    // Apna Billing is being uninstalled: tell the vendor's server for every business here, then stop (no server)
+    return require('../../server/dist/licensing/licenseClient.js').reportUninstalled().then((told) => {
+      console.log(`APNA_UNINSTALLED=${told}`);
+      process.exit(0);
+    });
+  }
+  // Always the same address when it is free: the window keeps what it saved (theme, sign-ins, zoom) from one start to
+  // the next, since a page's saved settings belong to its address. Another program on that port: any free port.
+  const { startServer } = require('../../server/dist/index.js');
+  return startServer(47832).catch((err) => (err && err.code === 'EADDRINUSE' ? startServer(0) : Promise.reject(err)));
+}).then((started) => {
+  if (started) console.log(`APNA_PORT=${started.port}`);
 }).catch((err) => {
   fail(`Local server failed to start: ${err && err.stack ? err.stack : err}`);
 });

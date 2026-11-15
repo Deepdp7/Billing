@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { desktop } from '../lib/desktop';
 
 type Theme = 'light' | 'dark';
 
@@ -15,9 +16,11 @@ const ThemeContext = createContext<ThemeContextType>({
 });
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // The desktop app's saved theme (on disk) first, then this window's storage
   const [theme, setThemeState] = useState<Theme>(() => {
-    const saved = localStorage.getItem('apna_billing_theme') as Theme;
-    return saved === 'dark' ? 'dark' : 'light';
+    const fromApp = document.documentElement.dataset.apnaTheme;
+    if (fromApp === 'dark' || fromApp === 'light') return fromApp;
+    try { return localStorage.getItem('apna_billing_theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; }
   });
 
   useEffect(() => {
@@ -27,7 +30,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } else {
       root.classList.remove('dark');
     }
-    localStorage.setItem('apna_billing_theme', theme);
+    root.dataset.apnaTheme = theme;
+    try { localStorage.setItem('apna_billing_theme', theme); } catch { /* private mode */ }
+    desktop.saveTheme(theme);
   }, [theme]);
 
   const toggleTheme = () => {
