@@ -1,7 +1,9 @@
 """Apna Billing: deploy the license server to the VPS, build the client installer, and publish updates.
 
     python deploy/apna_vps.py setup                 first time only: prepare /home/apna-billing on the VPS
-    python deploy/apna_vps.py deploy                upload the license server + Admin Panel and restart it
+    python deploy/apna_vps.py deploy                upload the server + Admin Panel (Winteg & Wave from ../SuperAdmin
+                                                    when it is there) and restart it; puts the previous one back
+                                                    by itself if the new one does not start
     python deploy/apna_vps.py admin                 create an Admin Panel login (OWNER)
     python deploy/apna_vps.py build                 build the client installer (.exe) that talks to the VPS
     python deploy/apna_vps.py build --next          raise the version by one, then build (for Admin Panel > App Updates)
@@ -154,18 +156,30 @@ def cmd_setup(_args):
     vps.close()
 
 
+# The server the VPS runs. Winteg & Wave (the SuperAdmin folder next to this one: every app, Billing included) replaced
+# this folder's own license-server and admin-panel; those are only used when the SuperAdmin folder is not there.
+SUPERADMIN = os.path.abspath(os.environ.get('SUPERADMIN_DIR') or os.path.join(ROOT, '..', 'SuperAdmin'))
+
+
+def server_source():
+    if os.path.isfile(os.path.join(SUPERADMIN, 'server', 'package.json')):
+        return 'Winteg & Wave server and Admin Panel', os.path.join(SUPERADMIN, 'server'), os.path.join(SUPERADMIN, 'panel')
+    return 'Apna Billing license server and Admin Panel', os.path.join(ROOT, 'license-server'), os.path.join(ROOT, 'admin-panel')
+
+
 def package_server():
-    say('Building the license server and Admin Panel')
-    sh('npm run build', cwd=os.path.join(ROOT, 'admin-panel'))
-    sh('npm run build', cwd=os.path.join(ROOT, 'license-server'))
+    name, server, panel = server_source()
+    say(f'Building the {name}')
+    print(f'   from {os.path.dirname(server)}', flush=True)
+    sh('npm run build', cwd=panel)
+    sh('npm run build', cwd=server)
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode='w:gz') as tar:
-        ls = os.path.join(ROOT, 'license-server')
-        tar.add(os.path.join(ls, 'dist'), arcname='license-server/dist')
+        tar.add(os.path.join(server, 'dist'), arcname='license-server/dist')
         for f in ('package.json', 'package-lock.json'):
-            tar.add(os.path.join(ls, f), arcname=f'license-server/{f}')
+            tar.add(os.path.join(server, f), arcname=f'license-server/{f}')
         tar.add(os.path.join(ROOT, 'deploy', 'backup-db.cjs'), arcname='license-server/backup-db.cjs')
-        tar.add(os.path.join(ROOT, 'admin-panel', 'dist'), arcname='admin-panel')
+        tar.add(os.path.join(panel, 'dist'), arcname='admin-panel')
     return buf.getvalue()
 
 
@@ -179,28 +193,75 @@ def cmd_deploy(args):
     # Public half of the update-signing key: the Admin Panel checks uploaded installers against it.
     updater_pub = json.load(open(os.path.join(ROOT, 'tauri', 'src-tauri', 'tauri.conf.json'), encoding='utf-8'))['plugins']['updater']['pubkey']
     vps.put_bytes(updater_pub.encode(), f'{BASE}/keys/updater.pub')
-    say('Installing on the VPS')
-    vps.run(f'''set -e
+    port = CFG['port']
+    say('Installing on the VPS (the running version is kept and comes back by itself if the new one does not start)')
+    # The new version is prepared beside the running one, so apps stay served meanwhile; only the switch-over stops the
+    # server (a few seconds). The database is copied first, then the folders are swapped; if the new version does not
+    # answer within a minute, the previous folders and the database copy are put back and started again.
+    vps.run(f"""set -e
 cd {BASE}
 # The license signing key is set once. A different key would invalidate every installed app, so refuse unless asked.
 if [ ! -f keys/signing-private.pem ]; then mv keys/incoming.pem keys/signing-private.pem; echo "   signing key installed";
 elif cmp -s keys/incoming.pem keys/signing-private.pem; then rm keys/incoming.pem;
 elif [ "{1 if args.replace_key else 0}" = "1" ]; then cp keys/signing-private.pem keys/signing-private.pem.$(date +%s).bak; mv keys/incoming.pem keys/signing-private.pem; echo "   signing key REPLACED";
-else rm keys/incoming.pem; echo "The VPS already has a different license signing key. Re-run with --replace-key only if you mean it." >&2; exit 3; fi
-rm -rf license-server/dist admin-panel.new && mkdir -p admin-panel.new
-tar -xzf /tmp/apna-billing-server.tgz -C {BASE} --transform 's,^admin-panel,admin-panel.new,'
-rm -rf admin-panel && mv admin-panel.new admin-panel && rm -f /tmp/apna-billing-server.tgz
-cd license-server && npm ci --omit=dev --no-audit --no-fund --loglevel=error
-chown -R apnabilling:apnabilling {BASE}/license-server {BASE}/admin-panel {BASE}/keys
-chmod 600 {BASE}/keys/signing-private.pem && chmod 644 {BASE}/keys/updater.pub
-systemctl restart apna-license
-for i in $(seq 1 30); do curl -fsk https://127.0.0.1:{CFG['port']}/api/health >/dev/null 2>&1 && break; sleep 1; done
-curl -fsk https://127.0.0.1:{CFG['port']}/api/health && echo
-''')
+else rm keys/incoming.pem; rm -f /tmp/apna-billing-server.tgz; echo "The VPS already has a different license signing key. Re-run with --replace-key only if you mean it." >&2; exit 3; fi
+chown -R apnabilling:apnabilling keys
+chmod 600 keys/signing-private.pem && chmod 644 keys/updater.pub
+
+echo "   preparing the new version (the server keeps running)"
+rm -rf stage && mkdir -p stage
+tar -xzf /tmp/apna-billing-server.tgz -C stage && rm -f /tmp/apna-billing-server.tgz
+(cd stage/license-server && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
+chown -R apnabilling:apnabilling stage
+
+B={BASE}/backups/deploy-$(date +%Y%m%d-%H%M%S)
+mkdir -p "$B/data"
+healthy() {{
+  for i in $(seq 1 "$1"); do curl -fsk https://127.0.0.1:{port}/api/health >/dev/null 2>&1 && return 0; sleep 1; done
+  return 1
+}}
+rollback() {{
+  set +e
+  echo "   putting the previous version back" >&2
+  systemctl stop apna-license
+  for d in license-server admin-panel; do
+    if [ -d "$B/$d" ]; then rm -rf "{BASE}/$d"; mv "$B/$d" "{BASE}/$d"; fi
+  done
+  if ls "$B"/data/license.db >/dev/null 2>&1; then
+    rm -f {BASE}/data/license.db {BASE}/data/license.db-wal {BASE}/data/license.db-shm
+    cp -a "$B"/data/license.db* {BASE}/data/
+  fi
+  chown -R apnabilling:apnabilling {BASE}/license-server {BASE}/admin-panel {BASE}/data
+  systemctl start apna-license
+  healthy 30 && echo "   the previous version is running again" >&2
+}}
+
+echo "   switching over"
+trap 'echo "Could not stop the server or copy the database: nothing was changed" >&2; systemctl start apna-license; exit 1' ERR
+systemctl stop apna-license
+cp -a data/license.db* "$B/data/"
+trap 'echo "The new version did not start" >&2; journalctl -u apna-license -n 30 --no-pager >&2; rollback; exit 1' ERR
+mv license-server "$B/license-server"
+mv admin-panel "$B/admin-panel"
+mv stage/license-server license-server
+mv stage/admin-panel admin-panel
+rmdir stage
+systemctl start apna-license
+healthy 60
+trap - ERR
+curl -fsk https://127.0.0.1:{port}/api/health && echo
+echo "$B" > backups/last-deploy
+# Keep the previous versions of the last 5 uploads
+ls -1dt backups/deploy-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+echo "   previous version kept in $B"
+""")
     vps.close()
     say('Checking from this computer')
     status, data = api('GET', '/api/health')
     print(f'   {CFG["publicUrl"]}/api/health -> {status} {data}')
+    if status != 200:
+        raise SystemExit('The server does not answer from outside. Check the output above.')
+    say('Done. Reopen the Admin Panel (or refresh it) to see the new version.')
 
 
 def cmd_admin(_args):
