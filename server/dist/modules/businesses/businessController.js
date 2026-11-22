@@ -5,12 +5,15 @@ exports.updateBusinessProfile = updateBusinessProfile;
 exports.getDashboardStats = getDashboardStats;
 exports.getSettings = getSettings;
 exports.updateSettings = updateSettings;
+exports.getBrandingSettings = getBrandingSettings;
+exports.updateBrandingSettings = updateBrandingSettings;
 const zod_1 = require("zod");
 const connection_js_1 = require("../../db/connection.js");
 const http_js_1 = require("../../lib/http.js");
 const dates_js_1 = require("../../lib/dates.js");
 const settingsService_js_1 = require("../../services/settingsService.js");
 const auditService_js_1 = require("../../services/auditService.js");
+const brandingService_js_1 = require("../../services/brandingService.js");
 function getBusinessProfile(req, res) {
     const businessId = req.businessId;
     const business = connection_js_1.db.prepare('SELECT * FROM businesses WHERE id = ?').get(businessId);
@@ -131,4 +134,14 @@ function updateSettings(req, res) {
     const settings = (0, settingsService_js_1.updateBusinessSettings)(req.businessId, input);
     (0, auditService_js_1.logAudit)({ businessId: req.businessId, userId: req.user?.userId, action: 'SETTINGS_UPDATED', entityType: 'SETTINGS', details: input });
     res.json({ message: 'Settings saved', settings });
+}
+function getBrandingSettings(req, res) {
+    res.json({ branding: (0, brandingService_js_1.getBranding)(req.businessId) });
+}
+function updateBrandingSettings(req, res) {
+    const changed = (0, brandingService_js_1.updateBranding)(req.businessId, (0, http_js_1.parse)(brandingService_js_1.brandingSchema, req.body));
+    // Only what changed is recorded: pictures are far too big for the audit log
+    if (changed.length)
+        (0, auditService_js_1.logAudit)({ businessId: req.businessId, userId: req.user?.userId, action: 'BRANDING_UPDATED', entityType: 'SETTINGS', details: { changed } });
+    res.json({ message: 'Branding saved', branding: (0, brandingService_js_1.getBranding)(req.businessId) });
 }

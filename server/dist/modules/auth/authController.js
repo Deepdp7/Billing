@@ -461,7 +461,7 @@ function getCurrentUser(req, res) {
     }
     const user = connection_js_1.db.prepare(`
     SELECT u.id, u.name, u.email, u.role, u.business_id,
-           b.name as business_name, b.category as business_category, b.plan_id, b.gstin, b.invoice_prefix, b.address, b.city, b.state, b.phone
+           b.name as business_name, b.category as business_category, b.plan_id, b.gstin, b.invoice_prefix, b.address, b.city, b.state, b.phone, b.logo_url
     FROM users u
     LEFT JOIN businesses b ON u.business_id = b.id
     WHERE u.id = ?
@@ -492,6 +492,7 @@ function getCurrentUser(req, res) {
             city: user.city,
             state: user.state,
             phone: user.phone,
+            businessLogo: user.logo_url || null,
             activeModules,
             settings: user.business_id ? (0, settingsService_js_1.getBusinessSettings)(user.business_id) : undefined,
         },

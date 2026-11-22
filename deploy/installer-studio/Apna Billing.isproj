@@ -24,7 +24,7 @@
   "replacesUninstallKey": "Apna Billing",
   "compression": "smallest",
   "outputDir": "C:\\Users\\ARITRA\\Desktop\\Billing\\releases",
-  "outputName": "ApnaBilling-1.0.0+1-setup",
+  "outputName": "ApnaBilling-1.0.0+2-setup",
   "protectFiles": true,
   "uninstallArgs": "--uninstall"
 }

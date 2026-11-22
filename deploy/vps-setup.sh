@@ -2,14 +2,14 @@
 # Apna Billing license server + Admin Panel on a shared VPS. Safe to re-run.
 #
 # Touches ONLY:
-#   /home/apna-billing/...                       everything (app, data, keys, certificate, updates, backups)
+#   /home/winteg-wave/...                       everything (app, data, keys, certificate, updates, backups)
 #   system user "apnabilling"                    runs the service (no login shell)
 #   /etc/systemd/system/apna-license.service     its own service
 #   /etc/cron.d/apna-billing                     nightly backup of its own database
 # It does not touch nginx, other websites, PostgreSQL, pm2 or the firewall. It listens on its own port ($PORT).
 set -euo pipefail
 
-BASE=/home/apna-billing
+BASE=/home/winteg-wave
 PORT="${PORT:-7443}"
 IP="${PUBLIC_IP:?set PUBLIC_IP}"
 

@@ -3,8 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 
-const src = process.env.SQLITE_FILE || '/home/apna-billing/data/license.db';
-const dir = process.env.BACKUP_DIR || '/home/apna-billing/backups';
+const src = process.env.SQLITE_FILE || '/home/winteg-wave/data/license.db';
+const dir = process.env.BACKUP_DIR || '/home/winteg-wave/backups';
 const keep = 30;
 
 fs.mkdirSync(dir, { recursive: true });
