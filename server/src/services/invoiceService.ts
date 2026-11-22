@@ -5,6 +5,7 @@ import { HttpError, parse } from '../lib/http.js';
 import { DATE_RE, localDate, addDays } from '../lib/dates.js';
 import { calculateInvoice, CalculationError } from './invoiceCalculator.js';
 import { getBusinessSettings } from './settingsService.js';
+import { getBranding } from './brandingService.js';
 import { logAudit } from './auditService.js';
 import { seriesTag } from '../sync/syncEngine.js';
 import { nextDocumentNumber } from '../lib/numbering.js';
@@ -356,6 +357,8 @@ export function getInvoiceFull(businessId: string, id: string) {
     business,
     terms: settings.invoiceTerms,
     footer: settings.invoiceFooter,
+    // Logo, colour, signature, UPI and bank details printed on the bill
+    branding: getBranding(businessId),
   };
 }
 

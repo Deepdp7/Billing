@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { InvoicePreferences } from './InvoicePreferences.js';
+import { BrandingSettings } from './BrandingSettings.js';
 import { Settings, Store, Save, CheckCircle, Shield, Layers, Trash2 } from 'lucide-react';
 import { promptDialog, showAlert } from '../../components/ui/dialogs.js';
 
@@ -243,6 +244,8 @@ export const SettingsPage: React.FC = () => {
           </button>
         </div>
       </form>
+
+      <BrandingSettings />
 
       {/* Modular Architecture & Active Features */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm p-6 space-y-4">

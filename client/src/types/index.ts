@@ -26,6 +26,8 @@ export interface User {
   role: UserRole;
   businessId?: string | null;
   businessName?: string;
+  /** The shop's logo (a picture as a data URL), shown in the app's top bar */
+  businessLogo?: string | null;
   businessCategory?: BusinessCategory;
   planId?: string;
   activeModules?: string[];

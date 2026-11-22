@@ -444,3 +444,23 @@ Checks
 - Verified (local licence server, 2 engines, one switched off during the delete): refused without the tick; with it,
   the open computer erased at once, the switched-off one at its next start; same email signs up again with a new trial
   and no old products. Licence-server tests pass.
+
+## Logo & branding (2026-11-22)
+
+- **Settings → Logo & Branding** (owner only; staff see it read-only): logo upload (PNG/JPG/WebP/SVG, drag and drop,
+  resized to ≤512 px WebP, ~20–80 KB), brand colour (12 swatches + custom), tagline, website/Instagram, authorised
+  signature and company stamp (photo on white paper: the paper is made transparent), UPI ID + payee name with a
+  "Scan to pay" QR, bank details (account name/number, IFSC, bank, branch), logo on 80 mm receipts. Live preview is the
+  real A4 sheet fitted to the space.
+- Stored per business: logo in `businesses.logo_url`, the rest in `app_settings` (`brand.*`), so it is backed up with
+  the shop and synced to the account's other computers. Engine: `services/brandingService.ts`,
+  `GET/PUT /app/business/branding` (PUT owner only; pictures validated as PNG/JPEG/WebP data URLs ≤ ~600 KB; UPI ID and
+  IFSC checked; audit log records only which fields changed). `getInvoiceFull` returns `branding`; `/auth/me` returns
+  `businessLogo`.
+- Printed: A4 bill (logo, colour on top line/title/total/thank-you, tagline, website, bank details, UPI QR for exactly
+  the balance due, signature image, stamp), 80 mm receipt (grey logo, tagline, website, UPI QR when money is due),
+  report printouts (letterhead with logo, address, GSTIN). App top bar shows the logo.
+- UPI QR: `qrcode-generator` 1.4.4 (MIT), drawn as SVG (`components/ui/QrSvg.tsx`); link `upi://pay?pa=…&pn=…&am=…&cu=INR&tn=Bill …`.
+- Verified: engine tests 96/96 (new `test/branding.test.ts`: defaults, save/print with every bill, remove a picture,
+  bad input refused, owner-only); real app in headless Edge: uploads through the file buttons, save, A4 bill, receipt,
+  preview screenshots.

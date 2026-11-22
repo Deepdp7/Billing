@@ -30,7 +30,9 @@ export const Navbar: React.FC<NavbarProps> = ({ onNavigate }) => {
       <div className="flex items-center gap-3 min-w-0">
         {user?.businessName ? (
           <div className="flex items-center gap-2.5 min-w-[9rem] max-w-[14rem] bg-slate-100 dark:bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700/60">
-            <Store className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            {user.businessLogo
+              ? <img src={user.businessLogo} alt="" className="w-7 h-7 shrink-0 rounded-md object-contain bg-white" />
+              : <Store className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />}
             <div className="flex flex-col min-w-0">
               <span className="text-sm font-semibold leading-tight text-slate-800 dark:text-slate-100 truncate">{user.businessName}</span>
               <span className="text-[10px] font-medium tracking-wide uppercase text-slate-500 dark:text-slate-400">

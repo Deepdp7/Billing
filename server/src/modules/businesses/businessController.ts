@@ -6,6 +6,7 @@ import { parse } from '../../lib/http.js';
 import { localDate, addDays } from '../../lib/dates.js';
 import { getBusinessSettings, updateBusinessSettings } from '../../services/settingsService.js';
 import { logAudit } from '../../services/auditService.js';
+import { brandingSchema, getBranding, updateBranding } from '../../services/brandingService.js';
 
 export function getBusinessProfile(req: AuthenticatedRequest, res: Response): void {
   const businessId = req.businessId;
@@ -136,4 +137,15 @@ export function updateSettings(req: AuthenticatedRequest, res: Response): void {
   const settings = updateBusinessSettings(req.businessId!, input);
   logAudit({ businessId: req.businessId, userId: req.user?.userId, action: 'SETTINGS_UPDATED', entityType: 'SETTINGS', details: input });
   res.json({ message: 'Settings saved', settings });
+}
+
+export function getBrandingSettings(req: AuthenticatedRequest, res: Response): void {
+  res.json({ branding: getBranding(req.businessId!) });
+}
+
+export function updateBrandingSettings(req: AuthenticatedRequest, res: Response): void {
+  const changed = updateBranding(req.businessId!, parse(brandingSchema, req.body));
+  // Only what changed is recorded: pictures are far too big for the audit log
+  if (changed.length) logAudit({ businessId: req.businessId, userId: req.user?.userId, action: 'BRANDING_UPDATED', entityType: 'SETTINGS', details: { changed } });
+  res.json({ message: 'Branding saved', branding: getBranding(req.businessId!) });
 }

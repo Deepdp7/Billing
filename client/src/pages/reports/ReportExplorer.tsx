@@ -3,6 +3,7 @@ import { Download, Printer, Lock } from 'lucide-react';
 import { api, downloadFile, saveAsPdf } from '../../lib/api.js';
 import { formatINR } from '../../lib/utils.js';
 import { useLicense } from '../../context/LicenseContext.js';
+import { useAuth } from '../../context/AuthContext.js';
 import { Select } from '../../components/ui/Select.js';
 
 const REPORTS: Array<{ type: string; label: string; feature: string; grouped?: boolean }> = [
@@ -23,6 +24,7 @@ const REPORTS: Array<{ type: string; label: string; feature: string; grouped?: b
 /** Every report shares one server definition for the on-screen table and the CSV/Excel export. */
 export const ReportExplorer: React.FC<{ fromDate: string; toDate: string }> = ({ fromDate, toDate }) => {
   const { hasFeature } = useLicense();
+  const { user } = useAuth();
   const [type, setType] = useState('sales');
   const [groupBy, setGroupBy] = useState('day');
   const [data, setData] = useState<any>(null);
@@ -87,6 +89,18 @@ export const ReportExplorer: React.FC<{ fromDate: string; toDate: string }> = ({
 
       {data && (
         <div className="print-area bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4">
+          {/* Letterhead: only on paper and in the PDF */}
+          {user?.businessName && (
+            <div className="hidden print:flex items-center gap-3 pb-3 mb-3 border-b border-slate-300">
+              {user.businessLogo && <img src={user.businessLogo} alt="" className="h-12 max-w-[110px] object-contain" />}
+              <div className="min-w-0">
+                <div className="text-base font-black text-slate-900">{user.businessName}</div>
+                <div className="text-[10px] text-slate-500">
+                  {[[user.address, user.city, user.state].filter(Boolean).join(', '), user.phone && `Ph: ${user.phone}`, user.gstin && `GSTIN: ${user.gstin}`].filter(Boolean).join('  ·  ')}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="flex items-baseline justify-between mb-3">
             <h3 className="font-bold text-sm text-slate-900 dark:text-white">{data.title}</h3>
             <span className="text-[11px] text-slate-400">{fromDate || 'beginning'} → {toDate || 'today'}</span>

@@ -3,6 +3,8 @@ import { Invoice } from '../../types/index.js';
 import { formatDate, formatINR } from '../../lib/utils.js';
 import { canEncode } from '../../lib/code128.js';
 import { BarcodeSvg } from '../ui/BarcodeSvg.js';
+import { QrSvg } from '../ui/QrSvg.js';
+import { Branding, DEFAULT_BRANDING, shade, upiLink } from '../../lib/branding.js';
 
 const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve',
   'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
@@ -51,10 +53,14 @@ const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="text-[9.5px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-1">{children}</div>
 );
 
-/** The A4 tax invoice: the same sheet on screen, in the PDF and on paper. */
+/** The A4 tax invoice: the same sheet on screen, in the PDF and on paper, in the shop's own logo and colours. */
 export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
   const inv: any = invoice;
   const business: any = inv.business || {};
+  const brand: Branding = { ...DEFAULT_BRANDING, ...(inv.branding || {}) };
+  const logo = business.logo_url || brand.logo;
+  const accent = brand.color;
+  const ink = shade(accent, 0.25);
   const items = invoice.items || [];
   const cancelled = inv.status === 'CANCELLED';
   const interState = invoice.igst_paise > 0 || !!inv.is_inter_state;
@@ -63,6 +69,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
   const taxableOf = (it: any) => it.taxable_paise || it.total_paise - it.tax_paise;
   const title = business.gstin ? 'Tax Invoice' : 'Invoice';
   const address = [business.address, business.city, business.state, business.pincode].filter(Boolean).join(', ');
+  const bank = brand.showBank && brand.bankAccountNumber ? brand : null;
   const initials = String(business.name || '?').split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
 
   // GST summary per rate (what the bill's tax is made of)
@@ -80,10 +87,12 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
   }
   const taxRows = [...byRate.entries()].filter(([rate]) => rate > 0).sort((a, b) => a[0] - b[0]);
   const totalQty = items.reduce((s, it) => s + Number(it.quantity || 0), 0);
+  // "Scan to pay" only while money is due on the bill, for exactly that amount
+  const upiDue = brand.showUpiQr && brand.upiId && !cancelled ? balanceDue : 0;
 
   return (
     <div className="print-area relative bg-white text-slate-800 w-full rounded-lg shadow-md border border-slate-200 font-sans text-[11.5px] leading-snug select-text overflow-hidden">
-      <div className="h-1.5 bg-gradient-to-r from-emerald-600 to-teal-500" />
+      <div className="h-1.5" style={{ background: accent }} />
 
       {cancelled && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -95,18 +104,19 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
         {/* Seller and title */}
         <div className="flex justify-between items-start gap-6">
           <div className="flex gap-3.5 min-w-0">
-            {business.logo_url ? (
-              <img src={business.logo_url} alt="" className="w-14 h-14 rounded-xl object-contain border border-slate-200 bg-white shrink-0" />
+            {logo ? (
+              <img src={logo} alt="" className="max-w-[120px] h-16 object-contain shrink-0" />
             ) : (
-              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-500 text-white flex items-center justify-center text-xl font-black shrink-0">
+              <div className="w-14 h-14 rounded-xl text-white flex items-center justify-center text-xl font-black shrink-0" style={{ background: accent }}>
                 {initials}
               </div>
             )}
             <div className="min-w-0">
               <h1 className="text-[22px] font-black text-slate-900 leading-tight tracking-tight">{business.name}</h1>
+              {brand.tagline && <p className="text-[11px] font-semibold italic mt-0.5" style={{ color: ink }}>{brand.tagline}</p>}
               {address && <p className="text-slate-500 mt-0.5">{address}</p>}
               <p className="text-slate-500 mt-0.5">
-                {[business.phone && `Ph: ${business.phone}`, business.email].filter(Boolean).join('  ·  ')}
+                {[business.phone && `Ph: ${business.phone}`, business.email, brand.website].filter(Boolean).join('  ·  ')}
               </p>
               <p className="mt-1 font-semibold text-slate-700">
                 GSTIN: <span className="font-mono tracking-wide">{business.gstin || 'Unregistered'}</span>
@@ -114,7 +124,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
             </div>
           </div>
           <div className="text-right shrink-0">
-            <div className="text-[26px] font-black uppercase tracking-[0.08em] text-emerald-700 leading-none">{title}</div>
+            <div className="text-[26px] font-black uppercase tracking-[0.08em] leading-none" style={{ color: ink }}>{title}</div>
             <div className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-slate-400 mt-1.5">Original for recipient</div>
             {/* The bill number as a barcode: scan it in Returns or Invoices to find this bill */}
             {canEncode(invoice.invoice_number) && <BarcodeSvg value={invoice.invoice_number} className="ml-auto mt-2 h-8 w-40" />}
@@ -260,6 +270,34 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
               </div>
             )}
 
+            {(bank || upiDue > 0) && (
+              <div className="flex gap-4 items-start rounded-xl border border-slate-200 px-4 py-3">
+                {bank && (
+                  <div className="flex-1 min-w-0">
+                    <Label>Bank details</Label>
+                    <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-[10.5px]">
+                      {bank.bankAccountName && <><span className="text-slate-500">Account name</span><span className="font-semibold text-slate-800">{bank.bankAccountName}</span></>}
+                      <span className="text-slate-500">Account no.</span><span className="font-semibold font-mono text-slate-800 break-all">{bank.bankAccountNumber}</span>
+                      {bank.bankIfsc && <><span className="text-slate-500">IFSC</span><span className="font-semibold font-mono text-slate-800">{bank.bankIfsc}</span></>}
+                      {(bank.bankName || bank.bankBranch) && <><span className="text-slate-500">Bank</span><span className="font-semibold text-slate-800">{[bank.bankName, bank.bankBranch].filter(Boolean).join(', ')}</span></>}
+                      {brand.upiId && <><span className="text-slate-500">UPI</span><span className="font-semibold font-mono text-slate-800">{brand.upiId}</span></>}
+                    </div>
+                  </div>
+                )}
+                {upiDue > 0 && (
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    <QrSvg value={upiLink(brand, business.name, upiDue, invoice.invoice_number)} className="w-[84px] h-[84px]" />
+                    <div className="text-[10px] leading-tight max-w-[110px]">
+                      <div className="font-bold text-slate-800">Scan to pay</div>
+                      <div className="font-black text-[13px] mt-0.5" style={{ color: ink }}>{formatINR(upiDue)}</div>
+                      <div className="text-slate-500 mt-0.5">with any UPI app</div>
+                      {!bank && <div className="text-slate-500 font-mono mt-0.5 break-all">{brand.upiId}</div>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div>
               <Label>Terms &amp; conditions</Label>
               <p className="text-slate-500 text-[10.5px] whitespace-pre-line">{inv.terms || 'Goods once sold will not be taken back without the original invoice.'}</p>
@@ -291,7 +329,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
                 <div className="flex justify-between"><span className="text-slate-500">Round-off</span><span>{inv.round_off_paise > 0 ? '+' : '−'}{formatINR(Math.abs(inv.round_off_paise))}</span></div>
               ) : null}
             </div>
-            <div className="flex justify-between items-center px-4 py-3 bg-gradient-to-r from-emerald-600 to-teal-500 text-white">
+            <div className="flex justify-between items-center px-4 py-3 text-white" style={{ background: accent }}>
               <span className="font-semibold text-[12px]">Total</span>
               <span className="text-[19px] font-black tracking-tight">{formatINR(invoice.total_paise)}</span>
             </div>
@@ -306,12 +344,15 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
         {/* Thanks and signature */}
         <div className="mt-8 flex justify-between items-end gap-6">
           <div>
-            <p className="text-[14px] font-bold text-emerald-700">{inv.footer || 'Thank you for your business!'}</p>
+            <p className="text-[14px] font-bold" style={{ color: ink }}>{inv.footer || 'Thank you for your business!'}</p>
             <p className="text-[9.5px] text-slate-400 mt-1">E. &amp; O.E. · This is a computer-generated invoice.</p>
           </div>
-          <div className="text-center w-52 shrink-0">
+          <div className="relative text-center w-52 shrink-0">
+            {brand.stamp && <img src={brand.stamp} alt="" className="absolute -left-20 bottom-1 w-24 h-24 object-contain opacity-90 pointer-events-none" />}
             <div className="font-bold text-slate-800">For {business.name}</div>
-            <div className="h-12" />
+            {brand.signature
+              ? <img src={brand.signature} alt="" className="mx-auto h-12 max-w-[180px] object-contain" />
+              : <div className="h-12" />}
             <div className="border-t border-slate-300 pt-1 text-[10px] text-slate-500">Authorised Signatory</div>
           </div>
         </div>

@@ -1,3 +1,4 @@
+import type { Branding } from './branding.js';
 const API_BASE = '/api/v1';
 
 export class ApiError extends Error {
@@ -738,6 +739,8 @@ export const api = {
   trackUsage: (feature: string) => request<any>('/license/usage', { method: 'POST', body: JSON.stringify({ feature }) }),
   getBusinessSettings: () => request<{ settings: any }>('/app/business/settings'),
   updateBusinessSettings: (data: any) => request<{ settings: any }>('/app/business/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  getBranding: () => request<{ branding: Branding }>('/app/business/branding'),
+  updateBranding: (data: Partial<Branding>) => request<{ branding: Branding }>('/app/business/branding', { method: 'PUT', body: JSON.stringify(data) }),
 
   // ---------------- Billing extras ----------------
   recordInvoicePayment: (id: string, data: { amountPaise: number; mode: string; reference?: string; paymentDate?: string }) =>

@@ -5,6 +5,8 @@ import { saveAsPdf } from '../../lib/api.js';
 import { A4Invoice } from './A4Invoice.js';
 import { canEncode } from '../../lib/code128.js';
 import { BarcodeSvg } from '../ui/BarcodeSvg.js';
+import { QrSvg } from '../ui/QrSvg.js';
+import { Branding, DEFAULT_BRANDING, upiLink } from '../../lib/branding.js';
 import { PrintPortal } from '../system/PrintPortal.js';
 import { Printer, Download, X, CheckCircle } from 'lucide-react';
 
@@ -37,16 +39,23 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
   const inv: any = invoice;
   const business: any = inv.business || {};
   const balanceDue = inv.status === 'ISSUED' ? Math.max(0, invoice.total_paise - invoice.amount_paid_paise) : 0;
+  const brand: Branding = { ...DEFAULT_BRANDING, ...(inv.branding || {}) };
+  const logo = brand.logoOnReceipt ? business.logo_url || brand.logo : null;
+  const upiDue = brand.showUpiQr && brand.upiId ? balanceDue : 0;
 
   const sheet = (<>
     {/* ===================== THERMAL RECEIPT VIEW (80mm) ===================== */}
     {format === 'thermal' && (
       <div className="print-area bg-white text-black p-5 rounded-lg shadow-md border border-slate-200 w-80 font-mono text-[11px] leading-tight select-text">
         <div className="text-center pb-3 border-b border-dashed border-gray-400 space-y-1">
+          {/* Receipt printers print in black: the logo is printed in grey tones */}
+          {logo && <img src={logo} alt="" className="mx-auto max-h-16 max-w-[180px] object-contain grayscale contrast-125" />}
           <h2 className="text-base font-extrabold uppercase tracking-wide">{business.name}</h2>
+          {brand.tagline && <p className="text-[10px] italic">{brand.tagline}</p>}
           <p className="text-[10px] text-gray-700">{[business.address, business.city].filter(Boolean).join(', ')}</p>
           {business.gstin && <p className="text-[10px] font-bold">GSTIN: {business.gstin}</p>}
           {business.phone && <p className="text-[10px]">Ph: {business.phone}</p>}
+          {brand.website && <p className="text-[10px]">{brand.website}</p>}
           <div className="pt-1 text-[11px] font-bold border-t border-dashed border-gray-300">
             TAX INVOICE
           </div>
@@ -142,6 +151,13 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
             </div>
           )}
         </div>
+        {upiDue > 0 && (
+          <div className="py-2 border-b border-dashed border-gray-400 flex flex-col items-center gap-1 text-[10px]">
+            <QrSvg value={upiLink(brand, business.name, upiDue, invoice.invoice_number)} className="w-32 h-32" />
+            <div className="font-bold">Scan to pay {formatINR(upiDue)} (any UPI app)</div>
+            <div>{brand.upiId}</div>
+          </div>
+        )}
         {inv.status === 'CANCELLED' && <div className="py-2 text-center font-black text-red-600 border-b border-dashed border-gray-400">CANCELLED</div>}
 
         <div className="pt-3 text-center text-[10px] text-gray-600 space-y-0.5">

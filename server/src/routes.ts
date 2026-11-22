@@ -84,6 +84,8 @@ appRouter.put('/business/profile', bizCtrl.updateBusinessProfile);
 appRouter.get('/business/stats', bizCtrl.getDashboardStats);
 appRouter.get('/business/settings', bizCtrl.getSettings);
 appRouter.put('/business/settings', ownerOnly, bizCtrl.updateSettings);
+appRouter.get('/business/branding', bizCtrl.getBrandingSettings);
+appRouter.put('/business/branding', ownerOnly, bizCtrl.updateBrandingSettings);
 
 // Catalog (Products & Categories)
 appRouter.get('/products', catalogCtrl.getProducts);
