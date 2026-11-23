@@ -6,6 +6,7 @@ import { config, APP_VERSION } from './config/index.js';
 import routes from './routes.js';
 import { errorHandler } from './lib/http.js';
 import { embeddedClientHandler } from './lib/embeddedClient.js';
+import { runtimeOptions } from './config/runtime.js';
 import jwt from 'jsonwebtoken';
 import { requestSync } from './sync/syncEngine.js';
 import { db } from './db/connection.js';
@@ -97,6 +98,18 @@ export function createApp() {
   app.use('/api', (req, res) => {
     res.status(404).json({ code: 'NOT_FOUND', message: `No API route for ${req.method} ${req.originalUrl}` });
   });
+
+  // The sign-in screen's background videos. In the packaged app they are plain files next to the engine (not inside its
+  // executable): a video must be read in ranges to start playing at once and to be skipped through, which the
+  // embedded files cannot do. A missing file is a plain 404, never the app's page.
+  const mediaDir = runtimeOptions().sealed
+    ? path.join(path.dirname(process.execPath), 'login-media')
+    : path.join(config.clientDistDir, 'login-media');
+  if (fs.existsSync(mediaDir)) {
+    app.use('/login-media',
+      express.static(mediaDir, { index: false, maxAge: '365d', immutable: true, acceptRanges: true, dotfiles: 'ignore' }),
+      (_req, res) => { res.status(404).end(); });
+  }
 
   // Serve the built client (desktop / production). Unknown non-API paths fall back to index.html.
   const embeddedClient = embeddedClientHandler();

@@ -127,6 +127,8 @@ const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).forEach((e) =
   const full = path.join(dir, e.name);
   if (e.isDirectory()) return walk(full);
   const urlPath = '/' + path.relative(clientDist, full).split(path.sep).join('/');
+  // The sign-in videos are shipped as plain files next to the engine (see below), not inside its executable
+  if (urlPath.startsWith('/login-media/')) return;
   clientFiles.push(urlPath);
   assets[`client${urlPath}`] = full;
 });
@@ -180,9 +182,21 @@ if (process.env.LICENSE_SERVER_CA) {
 
 // ---------------------------------------------------------------- checks + integrity manifest
 
+// The sign-in screen's videos: plain files in engine/login-media, served with range requests by the engine (a video
+// cannot start or loop smoothly from the executable's memory). They are pictures, not code, so they stay out of the
+// integrity manifest: hashing them would make every start read ~10 MB more, which slow computers feel.
+const mediaSrc = path.join(clientDist, 'login-media');
+const mediaDest = path.join(engineDir, 'login-media');
+if (fs.existsSync(mediaSrc)) {
+  const bad = fs.readdirSync(mediaSrc).filter((f) => !/\.(mp4|webp)$/i.test(f));
+  if (bad.length) throw new Error(`Only .mp4 and .webp belong in login-media: ${bad.join(', ')}`);
+  fs.cpSync(mediaSrc, mediaDest, { recursive: true });
+}
+
 const shipped = [];
 const collect = (d) => fs.readdirSync(d, { withFileTypes: true }).forEach((e) => {
   const p = path.join(d, e.name);
+  if (p === mediaDest) return;
   if (e.isDirectory()) return collect(p);
   shipped.push(p);
 });
@@ -206,6 +220,9 @@ for (const p of shipped) console.log(`   ${path.relative(engineDir, p).padEnd(28
  */
 function smokeTest(exe) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apna-engine-smoke-'));
+  // A sign-in video next to the engine must be served in ranges (how a video starts at once and loops)
+  const mediaDir = path.join(path.dirname(exe), 'login-media');
+  const video = fs.existsSync(mediaDir) ? fs.readdirSync(mediaDir).find((f) => f.endsWith('.mp4')) || '' : '';
   try {
     const script = `
       const { spawn } = require('child_process');
@@ -231,6 +248,14 @@ function smokeTest(exe) {
           ok = (await fetch(base + '/api/health')).ok
             && (await (await fetch(base + '/')).text()).includes('<div id="root">')
             && license.enforced === true && license.mode === 'UNLICENSED';
+          const video = ${JSON.stringify(video)};
+          if (video) {
+            const part = await fetch(base + '/login-media/' + video, { headers: { Range: 'bytes=0-999' } });
+            const partOk = part.status === 206 && (await part.arrayBuffer()).byteLength === 1000;
+            const missing = (await fetch(base + '/login-media/missing.mp4')).status;
+            if (!partOk || missing !== 404) console.error('sign-in videos not served in ranges:', part.status, missing);
+            ok = ok && partOk && missing === 404;
+          }
         } finally {
           p.stdin.end(); // the engine exits when its shell goes away
         }

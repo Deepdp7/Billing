@@ -464,3 +464,32 @@ Checks
 - Verified: engine tests 96/96 (new `test/branding.test.ts`: defaults, save/print with every bill, remove a picture,
   bad input refused, owner-only); real app in headless Edge: uploads through the file buttons, save, A4 bill, receipt,
   preview screenshots.
+
+## Sign-in screen with looping shop videos (2026-11-24, Parts A + B of the plan)
+
+- **Screen**: the 4 clips (grocery, pharmacy, clothing, restaurant; 8 s each) fill the whole sign-in window, darkened, with
+  the headline, category chip and 4 progress bars on the left (a bar jumps to its clip) and the sign-in card on the
+  right as frosted glass. `components/auth/VideoBackdrop.tsx` (player), `components/auth/loginStory.tsx` (shared clip
+  state: the bars are moved straight in the page, never through React renders), `lib/loginMedia.ts` (clips + words).
+  The old drawn `LoginShowcase` is removed.
+- **Player**: two `<video>` elements only (clip on screen + the next, loaded ~3 s ahead), one timer per clip (no per-frame
+  JavaScript), 0.6 s cross-fade, pauses while the window is hidden, frees the videos on leaving the screen. Lite
+  computers (`html.lite`) get the 720p24 files; others 1080p30; both H.264 (hardware decoding on every Windows PC).
+  Reduce-motion, a video that cannot play or a 10 s start-up timeout show the posters instead.
+- **Files**: `scripts/encode-login-videos.mjs` (`--placeholder` makes stand-ins; real clips go in
+  `branding/login-videos/raw/{1..4}-*.mp4`, which is git-ignored) writes `client/public/login-media/` (content-hashed
+  names, 1080p <= 4.5 MB, 720p <= 2 MB, poster) and `client/src/lib/loginMedia.generated.ts`.
+- **Serving**: videos are plain files next to the engine (`engine/login-media/`), not inside the sealed executable:
+  `server/src/app.ts` serves `/login-media` with range requests (206), one-year immutable caching and a plain 404 for a
+  missing file. `tauri/scripts/prepare.cjs` leaves them out of the embedded client and of the start-up integrity
+  manifest (hashing them would make every start read ~10 MB more) and its smoke test checks 206 / 404.
+- **Fixed on the way**: lite mode never removed blur. The CSS build dropped the standard `backdrop-filter: none` from the
+  `html.lite` rule and kept only the `-webkit-` one, which Edge / WebView2 ignore. Now only the standard property is
+  written and the build emits both.
+- Verified: engine tests 96/96; real sealed-engine build with smoke test; headless Edge, 22 checks (1080p playback, one
+  clip loaded at a time, next clip 3 s ahead, cross-fade, headline + bars, jump by bar, quick double press, hidden
+  pauses / visible resumes, typing keeps playing, light / dark / 1280x720 / phone, lite = 720p + no blur + solid card,
+  reduce motion = posters that change every 8 s, blocked video = posters).
+- **Still to do (Part C)**: the owner's 4 real videos. Until they are encoded, `client/public/login-media/` holds
+  stand-in clips (gradient + label); do not publish a client update before running
+  `node scripts/encode-login-videos.mjs` with the real ones.

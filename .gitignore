@@ -36,3 +36,7 @@ releases/
 
 # The VPS address, login user and admin email (this repository is public)
 deploy/vps.json
+
+# Sign-in screen videos: the 4K source clips are large (the repository is public); the encoded files are kept
+branding/login-videos/raw/
+branding/login-videos/.work/

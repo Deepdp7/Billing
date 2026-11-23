@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext.js';
 import { clearSessionNotice, takeSessionNotice, useLicense, type SessionNotice } from '../../context/LicenseContext.js';
 import {
@@ -11,7 +11,9 @@ import type { SignupDraft } from './RegisterPage.js';
 import { ForgotPasswordDialog } from './ForgotPasswordDialog.js';
 import { CATEGORIES, STATE_NAMES } from './RegisterPage.js';
 import { Select } from '../../components/ui/Select.js';
-import { LoginShowcase } from '../../components/auth/LoginShowcase.js';
+import { VideoBackdrop } from '../../components/auth/VideoBackdrop.js';
+import { StoryBars, StoryText, createStory } from '../../components/auth/loginStory.js';
+import { LOGIN_CLIPS } from '../../lib/loginMedia.js';
 
 interface LoginPageProps {
   onContinueSignup: (draft: SignupDraft) => void;
@@ -36,6 +38,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   const [setupState, setSetupState] = useState('');
   const [setupCategory, setSetupCategory] = useState('');
   const demoMode = !!system?.demoMode;
+  // Which clip of the background story is showing (the player and the words share it; see components/auth/loginStory.tsx)
+  const story = useRef(createStory()).current;
   const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
   const [ownerName, setOwnerName] = useState('');
   const [email, setEmail] = useState('');
@@ -116,7 +120,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   };
 
   return (
-    <div className="relative min-h-screen w-full max-w-full overflow-x-hidden overscroll-none touch-pan-y bg-slate-100 text-slate-900 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-950 dark:to-emerald-950 dark:text-white flex items-center justify-center p-4">
+    <div className="relative isolate min-h-screen w-full max-w-full overflow-x-hidden overscroll-none touch-pan-y bg-slate-950 text-white flex items-center justify-center p-4">
+      <VideoBackdrop clips={LOGIN_CLIPS} story={story} />
       <div className="absolute top-4 right-4 z-20"><ThemeSwitch /></div>
       <div className="max-w-6xl w-full grid grid-cols-1 md:grid-cols-[1.15fr_1fr] gap-10 lg:gap-16 items-center">
 
@@ -126,83 +131,86 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <Zap className="w-7 h-7 text-white fill-white" />
             </div>
             <div>
-              <h1 className="text-3xl font-extrabold tracking-tight font-['Outfit']">
+              <h1 className="text-3xl font-extrabold tracking-tight font-['Outfit'] text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.4)]">
                 Apna Billing
               </h1>
-              <p className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold tracking-wide uppercase">
+              <p className="text-xs text-emerald-300 font-semibold tracking-wide uppercase drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]">
                 All-in-One Multi-Category Billing Platform
               </p>
             </div>
           </div>
 
-          <LoginShowcase />
+          <div className="space-y-5 pt-2 md:pt-10">
+            <StoryText clips={LOGIN_CLIPS} story={story} />
+            <StoryBars clips={LOGIN_CLIPS} story={story} />
+          </div>
 
           {demoMode && <div className="space-y-3 pt-2">
-            <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+            <div className="text-xs font-bold uppercase tracking-wider text-white/70 flex items-center gap-2">
               <span>🚀 1-Click Demo Profiles (Preloaded)</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <button type="button" onClick={() => quickDemoLogin('grocery')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 hover:border-emerald-500/50 transition group shadow-sm">
+              <button type="button" onClick={() => quickDemoLogin('grocery')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <ShoppingCart className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                  <span className="font-bold text-xs text-slate-900 dark:text-white">Apna Supermart</span>
+                  <ShoppingCart className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-xs text-white">Apna Supermart</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight">Grocery & Retail · Barcodes</p>
+                <p className="text-[11px] text-white/70 leading-tight">Grocery & Retail · Barcodes</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('restaurant')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 hover:border-emerald-500/50 transition group shadow-sm">
+              <button type="button" onClick={() => quickDemoLogin('restaurant')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <UtensilsCrossed className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                  <span className="font-bold text-xs text-slate-900 dark:text-white">Spice Garden Cafe</span>
+                  <UtensilsCrossed className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-xs text-white">Spice Garden Cafe</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight">Restaurant · KOT & Tables</p>
+                <p className="text-[11px] text-white/70 leading-tight">Restaurant · KOT & Tables</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('pharmacy')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 hover:border-emerald-500/50 transition group shadow-sm">
+              <button type="button" onClick={() => quickDemoLogin('pharmacy')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <Pill className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                  <span className="font-bold text-xs text-slate-900 dark:text-white">Apollo Care Chemist</span>
+                  <Pill className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-xs text-white">Apollo Care Chemist</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight">Pharmacy · Batches & Expiry</p>
+                <p className="text-[11px] text-white/70 leading-tight">Pharmacy · Batches & Expiry</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('clothing')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 hover:border-emerald-500/50 transition group shadow-sm">
+              <button type="button" onClick={() => quickDemoLogin('clothing')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <Shirt className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                  <span className="font-bold text-xs text-slate-900 dark:text-white">Zara Trends Fashion</span>
+                  <Shirt className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-xs text-white">Zara Trends Fashion</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight">Clothing · Size/Color Matrix</p>
+                <p className="text-[11px] text-white/70 leading-tight">Clothing · Size/Color Matrix</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('manufacturing')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 hover:border-emerald-500/50 transition group shadow-sm">
+              <button type="button" onClick={() => quickDemoLogin('manufacturing')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <Factory className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                  <span className="font-bold text-xs text-slate-900 dark:text-white">Apex Manufacturing</span>
+                  <Factory className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-xs text-white">Apex Manufacturing</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight">BOM Recipes · Work Orders</p>
+                <p className="text-[11px] text-white/70 leading-tight">BOM Recipes · Work Orders</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('school')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 hover:border-emerald-500/50 transition group shadow-sm">
+              <button type="button" onClick={() => quickDemoLogin('school')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <GraduationCap className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                  <span className="font-bold text-xs text-slate-900 dark:text-white">Vidyaniketan School</span>
+                  <GraduationCap className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-xs text-white">Vidyaniketan School</span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight">Students & Fee Collection</p>
+                <p className="text-[11px] text-white/70 leading-tight">Students & Fee Collection</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('admin')} disabled={isLoading} className="col-span-1 sm:col-span-2 text-left p-3 rounded-xl bg-white dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700/80 hover:border-emerald-500/50 transition group shadow-sm">
+              <button type="button" onClick={() => quickDemoLogin('admin')} disabled={isLoading} className="col-span-1 sm:col-span-2 text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
-                  <Shield className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                  <span className="font-bold text-xs text-slate-900 dark:text-white">Platform Super Admin</span>
+                  <Shield className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
+                  <span className="font-bold text-xs text-white">Platform Super Admin</span>
                 </div>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">SaaS Multi-tenant Control & Plans</p>
+                <p className="text-[11px] text-white/70 leading-tight">SaaS Multi-tenant Control & Plans</p>
               </button>
             </div>
           </div>}
         </div>
 
-        <div className="bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 p-8 rounded-2xl shadow-2xl">
+        <div className="login-card bg-white/85 dark:bg-slate-900/75 backdrop-blur-xl border border-white/40 dark:border-white/10 p-8 rounded-2xl shadow-2xl text-slate-900 dark:text-white">
           <div className="mb-5">
             <h2 className="text-xl font-bold font-['Outfit']">
               {mode === 'signup'

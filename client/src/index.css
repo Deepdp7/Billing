@@ -212,24 +212,20 @@
 
 /* Lite mode (lib/performance.ts): slower computers get no blur and no animations, so everything shows at once */
 html.lite *, html.lite ::before, html.lite ::after {
+  /* Only the standard property: the build adds the -webkit- one itself, and when both were written here it kept
+     just the prefixed one, which Edge/WebView2 ignores (the blur stayed on slow computers) */
   backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
   animation-duration: 1ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 1ms !important;
 }
 
-/* Sign-in showcase (components/auth/LoginShowcase.tsx): transform / opacity only, so it costs next to nothing */
-@keyframes apna-scan { 0% { top: 12%; } 50% { top: 84%; } 100% { top: 12%; } }
-.apna-scan { animation: apna-scan 1.4s ease-in-out infinite; }
-@keyframes apna-drift { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(24px, -18px) scale(1.08); } }
-.apna-drift { animation: apna-drift 14s ease-in-out infinite; }
-.apna-drift-slow { animation: apna-drift 22s ease-in-out infinite reverse; }
-@keyframes apna-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
-.apna-float { animation: apna-float 4s ease-in-out infinite; }
-@keyframes apna-flow { 0% { left: -20%; } 100% { left: 100%; } }
-.apna-flow { animation: apna-flow 1.1s linear infinite; }
+/* Sign-in screen (components/auth/VideoBackdrop.tsx, loginStory.tsx): opacity only, which the graphics chip composites cheaply */
 @keyframes apna-headline { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .apna-headline { animation: apna-headline 0.5s ease-out both; }
-/* Slower computers: no large blurred glow behind the showcase (the costly part for a weak graphics chip) */
-html.lite .apna-glow { display: none; }
+.login-fade { transition: opacity 600ms ease-in-out; }
+/* Lite mode removes every transition and all blur: keep the picture's cross-fade (shorter), and give the card a solid
+   background, because a see-through card over moving video needs the blur to be readable */
+html.lite .login-fade { transition-duration: 400ms !important; }
+html.lite .login-card { background-color: rgb(255 255 255 / 0.96) !important; }
+html.lite.dark .login-card { background-color: rgb(15 23 42 / 0.96) !important; }
