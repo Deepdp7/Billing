@@ -73,6 +73,14 @@ function ensureDataKey() {
 }
 const dataKey = ensureDataKey();
 
+/**
+ * The key the desktop shell hands the engine at every start: HMAC-SHA256(data key, "apna-billing/sqlite/v1"), exactly as
+ * database_key() in src-tauri/src/lib.rs. Everything the engine decrypts with that key (the sign-in media) is
+ * encrypted with it here, and the smoke test starts the engine with it, so the build tests what a customer's PC does.
+ * (Using the data key itself here once made every installed app show a black sign-in screen while all tests passed.)
+ */
+const shellDatabaseKey = crypto.createHmac('sha256', Buffer.from(dataKey, 'hex')).update('apna-billing/sqlite/v1').digest('hex');
+
 // ---------------------------------------------------------------- server + client
 
 if (!process.env.SKIP_BUILD) {
@@ -186,8 +194,8 @@ if (process.env.LICENSE_SERVER_CA) {
 // The sign-in screen's videos and pictures: kept next to the engine (a video cannot start or loop smoothly from the
 // executable's memory), but never as .mp4 / .webp files. Each is encrypted under an opaque name (server/src/lib/
 // loginMedia.ts, compiled to server/dist: the same code the engine decrypts with) and the engine serves it in ranges.
-// The key comes from the data key, which the shell hands to the engine at every start, so it is in no file of the
-// installation. They stay out of the start-up integrity manifest: hashing ~15 MB more would make every start slower
+// The key comes from the database key the shell hands to the engine at every start (see shellDatabaseKey), so it is in
+// no file of the installation. They stay out of the start-up integrity manifest: hashing ~15 MB more would make every start slower
 // on slow computers.
 const mediaSrc = path.join(clientDist, 'login-media');
 const mediaDest = path.join(engineDir, 'login-media');
@@ -196,7 +204,7 @@ if (mediaPlainNames.length) {
   const bad = mediaPlainNames.filter((f) => !/\.(mp4|webp)$/i.test(f));
   if (bad.length) throw new Error(`Only .mp4 and .webp belong in login-media: ${bad.join(', ')}`);
   const media = require(path.join(root, 'server', 'dist', 'lib', 'loginMedia.js'));
-  const mediaKey = media.deriveMediaKey(dataKey);
+  const mediaKey = media.deriveMediaKey(shellDatabaseKey);
   fs.mkdirSync(mediaDest, { recursive: true });
   for (const name of mediaPlainNames) {
     const plain = fs.readFileSync(path.join(mediaSrc, name));
@@ -248,7 +256,7 @@ function smokeTest(exe) {
           NODE_OPTIONS: '--require ./no-such-file.js', APNA_LICENSE_ENFORCE: '0' },
         stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true,
       });
-      // The data key, as the shell gives it: the sign-in media can only be decrypted with it (passed in the environment, not the command line)
+      // The database key, exactly as the shell gives it: the sign-in media can only be decrypted with it (passed in the environment, not the command line)
       p.stdin.write(JSON.stringify({ dbKey: process.env.SMOKE_DBKEY }) + '\\n');
       let out = '';
       let ok = false;
@@ -282,7 +290,7 @@ function smokeTest(exe) {
       });
       p.on('exit', () => { clearTimeout(t); process.exitCode = ok ? 0 : 1; });
     `;
-    execFileSync(process.execPath, ['-e', script], { stdio: 'inherit', env: { ...process.env, SMOKE_DBKEY: dataKey } });
+    execFileSync(process.execPath, ['-e', script], { stdio: 'inherit', env: { ...process.env, SMOKE_DBKEY: shellDatabaseKey } });
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }

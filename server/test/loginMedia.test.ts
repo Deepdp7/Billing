@@ -110,10 +110,13 @@ test('anything else is a plain 404: missing files, odd names, other types, other
   // Started without the shell's key: nothing can be decrypted
   configureRuntime({});
   assert.equal((await get('1-grocery-1080.abcd1234.mp4')).status, 404);
+  // Another key (an app built with another key than the files): refused, never served as noise (that was a black
+  // screen with no clue why)
   configureRuntime({ dbKey: crypto.randomBytes(32).toString('hex') });
   const wrong = await get('1-grocery-1080.abcd1234.mp4');
-  assert.equal(wrong.status, 200);
-  assert.notDeepEqual(wrong.body, video, 'a different key gives only noise');
+  assert.equal(wrong.status, 404, 'files made with another key are not served');
+  assert.equal(wrong.body.length, 0);
+  assert.throws(() => decryptMedia(fs.readFileSync(path.join(dir, storedName('1-grocery-1080.abcd1234.mp4'))), deriveMediaKey(crypto.randomBytes(32).toString('hex'))), /another key/);
   configureRuntime({ dbKey: DB_KEY });
   assert.deepEqual((await get('1-grocery-1080.abcd1234.mp4')).body, video);
 });

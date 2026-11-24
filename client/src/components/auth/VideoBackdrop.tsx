@@ -1,177 +1,289 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { LOGIN_MEDIA_URL, LOGIN_VIDEO, type LoginClip } from '../../lib/loginMedia.js';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { LOGIN_MEDIA_URL, LOGIN_TIMING, type LoginClip } from '../../lib/loginMedia.js';
 import type { StoryStore } from './loginStory.js';
 
 /**
- * The sign-in screen's full-screen background: one looping video of the shops one after another (the clips dissolve into
- * each other inside the file, and the end dissolves into the start, so the loop has no visible join). Made to be light
- * and hard to break on any computer:
- *  - ONE <video> element and one file: nothing is switched between files, so there is no hand-over that can stall, show
- *    black, or need a second decoder. The player only plays, loops and watches;
- *  - 1080p30 H.264: Windows decodes it in hardware, so the processor hardly works; 30 fps shows every frame for exactly
- *    two refreshes of a 60 Hz screen (no 3-2 stutter on camera moves);
- *  - nothing moves or fades on top of the video, and nothing blurs it: the words, the bars and the card sit still over a
- *    fixed darkening layer, so the graphics chip only has the video to draw;
- *  - which shop is on (words, bars) is read from the video's own clock four times a second, not driven by timers of
- *    its own, so the words can never get out of step with the picture;
- *  - it stops while the window is hidden or minimised, notices a picture that has frozen and starts it again (up to a
- *    few times), and frees the video when the screen is left;
- *  - "reduce motion" (a Windows setting), a video that cannot play, or a very slow start show the posters instead (the
- *    same pictures, changing at the same pace), and under everything is a dark green gradient, never plain black.
+ * The sign-in screen's full-screen background: the shop clips cross-fading with a slow zoom. The same player and timing
+ * as the PLRMS sign-in page (plrms-demo/src/components/layout/LoginHero.tsx), which plays smoothly on every PC:
+ *  - every clip is exactly clipMs long and plays once; the next one fades in over the last fadeMs, so the next shot is
+ *    already moving while this one ends: nothing freezes on a last frame and nothing loops;
+ *  - only the visible clip decodes; the next one starts loading once the visible one can play through, and the switch
+ *    waits for it (never fades into black on a slow start);
+ *  - a hidden or minimised window freezes everything where it is (clip, zoom and bar) and carries on from the same frame
+ *    on return; a snapshot of that frame covers the clip until it really shows it again (a restarted decoder would show
+ *    black and replay the last second);
+ *  - "reduce motion" or a data-saver setting shows the still pictures; a clip that cannot play shows its picture.
  */
 
-/** No picture after this long: use the posters */
-const START_TIMEOUT_MS = 12_000;
-/** A frozen picture is started again this many times before the posters take over */
-const MAX_RECOVERIES = 3;
-/** The recoveries are counted over this long: a freeze now and then is fine, a constant one is not */
-const RECOVERY_WINDOW_MS = 60_000;
+function useMedia(query: string) {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia(query);
+      mq.addEventListener('change', cb);
+      return () => mq.removeEventListener('change', cb);
+    },
+    () => window.matchMedia(query).matches,
+  );
+}
 
-const stillPicture = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+/** Data-saver browsers get the still posters instead of video. */
+const saveData = Boolean((navigator as any).connection?.saveData);
 
 export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> = ({ clips, story }) => {
-  const [mode, setMode] = useState<'video' | 'poster'>(() => (clips.length === 0 || stillPicture() ? 'poster' : 'video'));
-  const [index, setIndex] = useState(0); // posters only: the one on show
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const { clipMs, fadeMs, showMs } = LOGIN_TIMING;
+  const still = useMedia('(prefers-reduced-motion: reduce)') || saveData || clips.length === 0;
+  const [index, setIndex] = useState(0);
+  // the clip fading out: it keeps playing and zooming until the fade ends
+  const [prev, setPrev] = useState(-1);
+  // read by the delayed reset below and by the visibility handler, which run outside a render
+  const indexRef = useRef(index);
+  indexRef.current = index;
+  const prevRef = useRef(prev);
+  prevRef.current = prev;
+  const [hidden, setHidden] = useState(() => document.visibilityState === 'hidden');
+  const videos = useRef<(HTMLVideoElement | null)[]>([]);
+  // A snapshot of the exact frame on screen, laid over the clip while the window is away and until the clip has drawn
+  // that same moment again (see the top).
+  const frames = useRef<(HTMLCanvasElement | null)[]>([]);
+  const resumeAt = useRef<number | null>(null);
+  const [frozen, setFrozen] = useState(false);
+  // bumped each time the window hides, so a watcher from an earlier return does nothing
+  const epoch = useRef(0);
+  // clips that could not play: their still picture is shown instead
+  const [broken, setBroken] = useState<ReadonlySet<number>>(() => new Set());
 
-  // ---------------------------------------------------------------- video
+  // The words and bars follow the shop on screen, and stop with the picture
+  useEffect(() => { story.set(index); }, [index, story]);
+  useEffect(() => { story.pause(hidden || frozen); }, [hidden, frozen, story]);
+
+  // A hidden window (or minimised one) freezes the slideshow where it is: the clip, its zoom and the bar all pause
+  // together and carry on from the same frame on return, so nothing skips, restarts or shows black.
   useEffect(() => {
-    if (mode !== 'video') return;
-    const v = videoRef.current;
-    if (!v) return;
-    const { file, segment, overlap } = LOGIN_VIDEO;
-    const url = `${LOGIN_MEDIA_URL}${file}`;
-    const shops = clips.length;
-    /** Where a shop's clean picture begins: just after its dissolve (this is also what its poster shows) */
-    const startOf = (shop: number) => shop * segment + overlap / 2;
-
-    let alive = true;
-    let started = false;
-    let startWatchdog: number | undefined;
-    const recoveries: number[] = [];
-
-    const fail = () => { if (alive) setMode('poster'); };
-
-    /** (Re)loads the video and carries on from `at` seconds */
-    const load = (at: number) => {
-      v.src = url;
-      v.load();
-      v.addEventListener('loadedmetadata', () => {
-        if (!alive) return;
-        try { v.currentTime = at; } catch { /* the start is the start */ }
-        v.play().catch(() => { /* the watchdog tries again */ });
-      }, { once: true });
+    const onVis = () => {
+      const away = document.visibilityState === 'hidden';
+      if (away) {
+        epoch.current++;
+        const i = indexRef.current;
+        const v = videos.current[i];
+        const c = frames.current[i];
+        // Away again before the clip came back: the snapshot that is up is still the picture to return to.
+        if (v && c && c.hidden && v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && v.videoWidth) {
+          try {
+            c.width = v.videoWidth;
+            c.height = v.videoHeight;
+            c.getContext('2d')?.drawImage(v, 0, 0);
+            resumeAt.current = v.currentTime;
+            c.hidden = false;
+          } catch { /* no snapshot: the clip just carries on */ }
+        }
+        if (c && !c.hidden) setFrozen(true);
+      }
+      setHidden(away);
     };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
 
-    /** The picture froze or the video broke: start it again where it was, unless that keeps happening */
-    const recover = () => {
-      const now = performance.now();
-      while (recoveries.length && now - recoveries[0] > RECOVERY_WINDOW_MS) recoveries.shift();
-      if (recoveries.length >= MAX_RECOVERIES) return fail();
-      recoveries.push(now);
-      load(Math.max(startOf(0), v.currentTime || 0));
+  // Next shot showMs after the current clip really starts moving, but never onto a clip that has not loaded yet: on a
+  // slow start it would fade in black.
+  useEffect(() => {
+    if (still || hidden || frozen || clips.length < 2) return;
+    const cleanups: (() => void)[] = [];
+    const current = videos.current[index];
+    const advance = () => {
+      setPrev(index);
+      setIndex((index + 1) % clips.length);
     };
+    const nextIndex = (index + 1) % clips.length;
+    const next = videos.current[nextIndex];
+    let moved = false;
+    const go = () => { if (!moved) { moved = true; advance(); } };
+    const begin = () => {
+      const left = showMs - (current?.currentTime ?? 0) * 1000;
+      // 3 s before the switch the next clip is loaded again from its start. A clip that played a round ago was rewound,
+      // and the browser puts an idle player to sleep while it still says "ready": it would only wake at the switch and
+      // leave this clip standing on its last frame. Reloading a local file takes a fraction of a second.
+      const warm = window.setTimeout(() => {
+        if (!next || broken.has(nextIndex) || !next.paused) return;
+        next.preload = 'auto';
+        next.load();
+      }, Math.max(0, left - 3000));
+      const id = window.setTimeout(() => {
+        if (!next || broken.has(nextIndex)) return go();
+        if (next.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && next.networkState !== HTMLMediaElement.NETWORK_EMPTY) return go();
+        // Not ready yet: starting it is what wakes a sleeping player; it fades in on its first moving picture
+        next.addEventListener('playing', go, { once: true });
+        next.addEventListener('canplay', go, { once: true });
+        next.play().catch(() => {});
+        cleanups.push(() => { next.removeEventListener('playing', go); next.removeEventListener('canplay', go); });
+      }, Math.max(0, left));
+      cleanups.push(() => { clearTimeout(warm); clearTimeout(id); });
+    };
+    // Never stand on a last frame: if this clip ends before the next one is ready, switch now (the next one shows its
+    // still picture until its first frame is there)
+    if (current) {
+      current.addEventListener('ended', go, { once: true });
+      cleanups.push(() => current.removeEventListener('ended', go));
+    }
+    if (!current || broken.has(index) || (!current.paused && current.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA)) {
+      begin();
+    } else {
+      // count from the first played frame, not from the moment the screen opened; give up waiting after 3 s
+      let started = false;
+      const start = () => {
+        if (started) return;
+        started = true;
+        begin();
+      };
+      current.addEventListener('playing', start, { once: true });
+      const fallback = window.setTimeout(start, 3000);
+      cleanups.push(() => {
+        current.removeEventListener('playing', start);
+        clearTimeout(fallback);
+      });
+    }
+    return () => cleanups.forEach((fn) => fn());
+  }, [index, still, hidden, frozen, clips.length, showMs, broken]);
 
-    const onPlaying = () => { started = true; window.clearTimeout(startWatchdog); };
-    const onError = () => recover();
-    // A looping video does not end; if some browser lets it, it goes on from the start (inside the dissolve: not visible)
-    const onEnded = () => { v.currentTime = 0; v.play().catch(() => {}); };
-    v.addEventListener('playing', onPlaying);
-    v.addEventListener('error', onError);
-    v.addEventListener('ended', onEnded);
-
-    // A bar was pressed: that shop's clean picture
-    story.setJump((shop) => {
-      if (shop < 0 || shop >= shops || v.readyState < 1) return;
-      v.currentTime = startOf(shop);
+  // only the visible clip decodes; the next one is preloaded so the cross-fade starts on a real frame
+  useEffect(() => {
+    const current = videos.current[index];
+    const thaw = (i: number) => {
+      const c = frames.current[i];
+      if (c && !c.hidden) {
+        c.hidden = true;
+        c.width = 0; // frees the snapshot
+      }
+    };
+    const timers: number[] = [];
+    videos.current.forEach((v, i) => {
+      if (!v) return;
+      if (i === index) {
+        if (still || hidden) {
+          v.pause();
+          return;
+        }
+        const c = frames.current[i];
+        if (c && !c.hidden) {
+          // back on the frame the snapshot shows, then lift it once the clip has drawn that moment or later
+          const at = resumeAt.current;
+          if (at !== null && Math.abs(v.currentTime - at) > 0.04) v.currentTime = at;
+          const mine = epoch.current;
+          const done = () => {
+            if (epoch.current !== mine) return;
+            thaw(i);
+            setFrozen(false);
+          };
+          if (typeof v.requestVideoFrameCallback === 'function') {
+            const watch = () =>
+              v.requestVideoFrameCallback((_now, frame) => {
+                if (epoch.current !== mine) return;
+                if (at === null || frame.mediaTime >= at - 0.1) done();
+                else watch();
+              });
+            watch();
+          } else {
+            v.addEventListener('playing', done, { once: true });
+          }
+          timers.push(window.setTimeout(done, 3000));
+        }
+        v.play().catch(() => {});
+        return;
+      }
+      thaw(i);
+      if (hidden) {
+        v.pause();
+        return;
+      }
+      // the clip fading out keeps playing through the fade; others rewind for their next turn
+      timers.push(
+        window.setTimeout(() => {
+          if (i !== indexRef.current && i !== prevRef.current) {
+            v.pause();
+            v.currentTime = 0;
+          } else if (i === prevRef.current && i !== indexRef.current) {
+            v.pause();
+          }
+        }, fadeMs + 100),
+      );
     });
-
-    // Hidden or minimised: stop decoding; back: carry on
-    const onVisibility = () => {
-      if (document.hidden) v.pause();
-      else v.play().catch(() => {});
+    // The next clip starts loading once the visible one has enough to play through (loading both at once splits the
+    // disk and the decoder between them, so the first shot takes longer to appear).
+    const next = videos.current[(index + 1) % Math.max(1, clips.length)];
+    const loadNext = () => {
+      if (next && next.preload !== 'auto') {
+        next.preload = 'auto';
+        next.load();
+      }
     };
-    document.addEventListener('visibilitychange', onVisibility);
-
-    // Which shop is on, from the video's own clock (four times a second, straight into the page: no React render)
-    const follow = window.setInterval(() => {
-      if (document.hidden || !(v.duration > 0)) return;
-      const t = Math.min(v.currentTime, v.duration);
-      const shop = Math.min(shops - 1, Math.floor(t / segment));
-      story.set(shop);
-      story.progress(shop, (t - shop * segment) / segment);
-    }, 250);
-
-    // The watchdog: once a second, a picture that should be moving but is not is started again
-    let last = -1;
-    let still = 0;
-    const watch = window.setInterval(() => {
-      if (document.hidden || !started) { still = 0; return; }
-      if (v.paused) { v.play().catch(() => {}); return; }
-      still = Math.abs(v.currentTime - last) < 0.05 ? still + 1 : 0;
-      last = v.currentTime;
-      if (still >= 3) { still = 0; recover(); }
-    }, 1000);
-
-    // Start: the first picture is already there (the poster); the video takes over from the very same moment
-    story.set(0);
-    story.progress(0, 0);
-    load(startOf(0));
-    const arm = () => { startWatchdog = window.setTimeout(() => (document.hidden ? arm() : fail()), START_TIMEOUT_MS); };
-    arm();
-
+    const clear = () => timers.forEach((t) => clearTimeout(t));
+    if (!current || current.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+      loadNext();
+      return clear;
+    }
+    current.addEventListener('canplaythrough', loadNext, { once: true });
     return () => {
-      alive = false;
-      story.setJump(null);
-      window.clearTimeout(startWatchdog);
-      window.clearInterval(follow);
-      window.clearInterval(watch);
-      document.removeEventListener('visibilitychange', onVisibility);
-      v.removeEventListener('playing', onPlaying);
-      v.removeEventListener('error', onError);
-      v.removeEventListener('ended', onEnded);
+      clear();
+      current.removeEventListener('canplaythrough', loadNext);
+    };
+  }, [index, still, hidden, clips.length, fadeMs]);
+
+  // Leaving the screen (signed in): the videos are let go at once
+  useEffect(() => () => {
+    videos.current.forEach((v) => {
+      if (!v) return;
       v.pause();
       v.removeAttribute('src');
       v.load();
-    };
-  }, [mode, clips, story]);
+    });
+  }, []);
 
-  // ---------------------------------------------------------------- posters (reduced motion, or the video could not play)
-  useEffect(() => {
-    if (mode !== 'poster' || clips.length === 0) return;
-    let cur = 0;
-    let shownMs = 0; // how long this poster has been on screen, counting only while the window is visible
-    let last = performance.now();
-    story.set(0);
-    setIndex(0);
-    const show = (target: number) => {
-      cur = target;
-      shownMs = 0;
-      setIndex(target);
-      story.set(target);
-    };
-    story.setJump((target) => { if (target >= 0 && target < clips.length) show(target); });
-    const timer = window.setInterval(() => {
-      const now = performance.now();
-      if (!document.hidden) shownMs += now - last;
-      last = now;
-      if (shownMs >= LOGIN_VIDEO.segment * 1000 && clips.length > 1) show((cur + 1) % clips.length);
-      else story.progress(cur, Math.min(1, shownMs / (LOGIN_VIDEO.segment * 1000)));
-    }, 250);
-    return () => { window.clearInterval(timer); story.setJump(null); };
-  }, [mode, clips, story]);
-
+  const paused = hidden || frozen;
   return (
     <div className="login-base pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
-      {/* Posters: the first picture at once (the video starts from the very same picture), and what stays if the video
-          cannot play. Under playing video there is only the first one: other layers would be redrawn for nothing. */}
-      {clips.map((clip, i) => (mode === 'poster' || i === 0) && (
-        <img key={clip.id} src={`${LOGIN_MEDIA_URL}${clip.poster}`} alt="" decoding="async" draggable={false}
-          className={`absolute inset-0 h-full w-full object-cover ${mode === 'poster' ? `login-fade ${i === index ? 'opacity-100' : 'opacity-0'}` : ''}`} />
-      ))}
-      {mode === 'video' && (
-        <video ref={videoRef} muted loop playsInline autoPlay disablePictureInPicture disableRemotePlayback preload="auto" tabIndex={-1}
-          className="absolute inset-0 h-full w-full object-cover" />
+      {clips.map((clip, i) =>
+        still || broken.has(i) ? (
+          <img
+            key={clip.id}
+            src={`${LOGIN_MEDIA_URL}${clip.poster}`}
+            alt=""
+            decoding="async"
+            draggable={false}
+            className={`hero-fade absolute inset-0 h-full w-full object-cover ${i === index ? 'opacity-100' : 'opacity-0'}`}
+            style={{ transition: `opacity ${fadeMs}ms ease` }}
+          />
+        ) : (
+          <div
+            key={clip.id}
+            className={`hero-fade absolute inset-0 ${i === index ? 'hero-zoom opacity-100' : i === prev ? 'hero-zoom opacity-0' : 'opacity-0'}`}
+            style={{
+              transition: `opacity ${fadeMs}ms ease`,
+              animationDuration: `${clipMs}ms`,
+              ...(i === index ? { willChange: 'transform' } : {}),
+              ...(paused ? { animationPlayState: 'paused' } : {}),
+            }}
+          >
+            <video
+              ref={(el) => { videos.current[i] = el; }}
+              src={`${LOGIN_MEDIA_URL}${clip.video}`}
+              // its still picture until its first frame is there: never black, even on a late start
+              poster={`${LOGIN_MEDIA_URL}${clip.poster}`}
+              muted
+              playsInline
+              disablePictureInPicture
+              disableRemotePlayback
+              preload={i === 0 ? 'auto' : 'none'}
+              tabIndex={-1}
+              onError={() => setBroken((b) => new Set(b).add(i))}
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+            <canvas
+              ref={(el) => { frames.current[i] = el; }}
+              hidden
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          </div>
+        ),
       )}
       {/* Darkening so the words stay readable on any picture: strongest behind the text on the left */}
       <div className="login-shade absolute inset-0" />

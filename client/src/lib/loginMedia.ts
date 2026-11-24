@@ -2,10 +2,10 @@ import { ShoppingCart, Pill, Shirt, UtensilsCrossed, type LucideIcon } from 'luc
 import { LOGIN_MEDIA } from './loginMedia.generated.js';
 
 /**
- * The sign-in screen's background: ONE looping video of the four kinds of shop one after another (each dissolving into
- * the next, the last into the first), made by scripts/encode-login-videos.mjs from the owner's own clips, and one poster
- * per shop. Each shop has its words. The files are listed in loginMedia.generated.ts and served at /login-media/ (see
- * server/src/app.ts; in the installed app they are encrypted there).
+ * The sign-in screen's background: one clip per kind of shop (made by scripts/encode-login-videos.mjs from the owner's
+ * own clips, with the PLRMS sign-in settings), each with its words and a poster. The files are listed in
+ * loginMedia.generated.ts and served at /login-media/ (see server/src/app.ts; in the installed app they are encrypted
+ * there).
  */
 export interface LoginClip {
   id: string;
@@ -13,7 +13,9 @@ export interface LoginClip {
   Icon: LucideIcon;
   headline: string;
   subline: string;
-  /** The first clean picture of this shop's stretch of the video */
+  /** The clip (1080p, 24 fps, exactly LOGIN_TIMING.clipMs long) */
+  video: string;
+  /** Its first picture */
   poster: string;
 }
 
@@ -42,14 +44,14 @@ export const LOGIN_MEDIA_URL = '/login-media/';
 export const LOGIN_CLIPS: LoginClip[] = LOGIN_MEDIA.clips.flatMap((c) => (WORDS[c.id] ? [{ ...c, ...WORDS[c.id] }] : []));
 
 /**
- * The video's layout in time: it starts in the middle of the dissolve from the last shop into the first, and shop k has
- * the screen from k * segment to (k + 1) * segment seconds (its dissolve into the next shop is centred on the boundary).
+ * The timing, as on the PLRMS sign-in page: every clip is exactly clipMs long and plays once; the next one fades in over
+ * the last fadeMs, so the next shot is already moving while this one ends (nothing freezes on a last frame, nothing
+ * loops). Each shop is on screen for showMs.
  */
-export const LOGIN_VIDEO = {
-  file: LOGIN_MEDIA.video,
-  segment: LOGIN_MEDIA.segmentSeconds,
-  overlap: LOGIN_MEDIA.overlapSeconds,
-  duration: LOGIN_MEDIA.durationSeconds,
+export const LOGIN_TIMING = {
+  clipMs: LOGIN_MEDIA.clipMs,
+  fadeMs: LOGIN_MEDIA.fadeMs,
+  showMs: LOGIN_MEDIA.clipMs - LOGIN_MEDIA.fadeMs,
 };
 
 /** Shown when there are no clips at all (the screen then has just its dark background) */

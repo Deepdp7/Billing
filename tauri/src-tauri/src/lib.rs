@@ -45,6 +45,7 @@ struct Backend(Mutex<Option<Child>>);
 
 /// Key of the local database and its backups. Derived from the product data key compiled into this shell, so it is
 /// the same on every installation (a backup restores on any computer) yet never stored on disk or in the environment.
+/// tauri/scripts/prepare.cjs (shellDatabaseKey) makes the same key to encrypt the sign-in media: change both together.
 fn database_key() -> String {
     let data_key: Vec<u8> = DATA_KEY_MASKED.iter().zip(DATA_KEY_MASK.iter()).map(|(a, b)| a ^ b).collect();
     let mut mac = Hmac::<Sha256>::new_from_slice(&data_key).expect("HMAC accepts any key length");

@@ -21,11 +21,19 @@ import { runtimeOptions } from '../config/runtime.js';
  * the two cannot drift apart.
  */
 
-const MAGIC = Buffer.from('APNM');
-const HEADER = MAGIC.length + 16;
+// Header: magic, then 8 bytes that only the right key reproduces, then the IV. Files encrypted with another key (a build
+// whose key does not match the app's) are refused with a log line instead of being served as noise, which would
+// leave a black screen with no clue why.
+const MAGIC = Buffer.from('APNK');
+const CHECK = 8;
+const HEADER = MAGIC.length + CHECK + 16;
 const TYPES: Record<string, string> = { '.mp4': 'video/mp4', '.webp': 'image/webp' };
 
-/** AES key for the media files, from the database key (64 hex characters) */
+/**
+ * AES key for the media files, from the database key (64 hex characters): the key the desktop shell hands the engine
+ * at start, which is HMAC-SHA256(data key, "apna-billing/sqlite/v1") (tauri/src-tauri/src/lib.rs, database_key), NOT
+ * the data key itself. The build makes the same database key in tauri/scripts/prepare.cjs (shellDatabaseKey).
+ */
 export function deriveMediaKey(dbKeyHex: string): Buffer {
   if (!/^[0-9a-f]{64}$/.test(dbKeyHex)) throw new Error('Invalid key');
   return crypto.createHmac('sha256', Buffer.from(dbKeyHex, 'hex')).update('apna-login-media-v1').digest();
@@ -42,17 +50,21 @@ function counterAt(iv: Buffer, block: number): Buffer {
   return Buffer.from(n.toString(16).padStart(32, '0'), 'hex');
 }
 
-/** Encrypts a whole file: header (magic + IV) followed by the encrypted bytes */
+/** The 8 bytes in the header that tell whether a key is the one the file was made with */
+const keyCheck = (key: Buffer) => crypto.createHmac('sha256', key).update('apna-login-media-check').digest().subarray(0, CHECK);
+
+/** Encrypts a whole file: header (magic + key check + IV) followed by the encrypted bytes */
 export function encryptMedia(plain: Buffer, key: Buffer): Buffer {
   const iv = crypto.randomBytes(16);
   const cipher = crypto.createCipheriv('aes-256-ctr', key, iv);
-  return Buffer.concat([MAGIC, iv, cipher.update(plain), cipher.final()]);
+  return Buffer.concat([MAGIC, keyCheck(key), iv, cipher.update(plain), cipher.final()]);
 }
 
 /** Decrypts a whole file made by encryptMedia (used by tests and checks; the engine serves ranges instead) */
 export function decryptMedia(stored: Buffer, key: Buffer): Buffer {
   if (stored.length < HEADER || !stored.subarray(0, MAGIC.length).equals(MAGIC)) throw new Error('Not an encrypted media file');
-  const decipher = crypto.createDecipheriv('aes-256-ctr', key, stored.subarray(MAGIC.length, HEADER));
+  if (!stored.subarray(MAGIC.length, MAGIC.length + CHECK).equals(keyCheck(key))) throw new Error('Encrypted with another key');
+  const decipher = crypto.createDecipheriv('aes-256-ctr', key, stored.subarray(MAGIC.length + CHECK, HEADER));
   return Buffer.concat([decipher.update(stored.subarray(HEADER)), decipher.final()]);
 }
 
@@ -84,6 +96,7 @@ export function encryptedMediaHandler(dir: string): RequestHandler {
     return cached.key;
   };
   const notFound = (res: Response) => { res.status(404).end(); };
+  let warned = false;
 
   return (req: Request, res: Response) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return notFound(res);
@@ -110,7 +123,14 @@ export function encryptedMediaHandler(dir: string): RequestHandler {
     }
     fs.closeSync(fd);
     if (!head.subarray(0, MAGIC.length).equals(MAGIC)) return notFound(res);
-    const iv = head.subarray(MAGIC.length);
+    if (!head.subarray(MAGIC.length, MAGIC.length + CHECK).equals(keyCheck(key))) {
+      if (!warned) {
+        warned = true;
+        console.error('[login-media] the sign-in videos were encrypted with another key than this app has: not served (rebuild the app)');
+      }
+      return notFound(res);
+    }
+    const iv = head.subarray(MAGIC.length + CHECK);
     const total = size - HEADER;
 
     res.setHeader('Content-Type', type);

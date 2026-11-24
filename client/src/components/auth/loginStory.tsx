@@ -1,45 +1,36 @@
-import React, { useEffect, useRef, useSyncExternalStore } from 'react';
-import { FALLBACK_WORDS, type LoginClip } from '../../lib/loginMedia.js';
+import React, { useSyncExternalStore } from 'react';
+import { FALLBACK_WORDS, LOGIN_TIMING, type LoginClip } from '../../lib/loginMedia.js';
 
 /**
- * Which clip of the sign-in story is on screen and how far it is. The headline re-renders only when the clip changes;
- * the progress bars are moved straight in the page (no React render), so typing a password never competes with it.
+ * Which shop the sign-in background shows, and whether it is paused (window hidden, or waiting for the picture to come
+ * back). The player sets it; the words and the bars follow. Nothing here runs per frame: the words change once per
+ * shop, and the bar of the shop on screen fills by a CSS animation (drawn by the graphics chip), paused with the video.
  */
 export interface StoryStore {
   getIndex(): number;
+  getPaused(): boolean;
   subscribe(fn: () => void): () => void;
-  /** The player: the clip now showing */
+  /** The player: the shop now showing */
   set(index: number): void;
-  /** The player: how far the clip is (0..1) */
-  progress(index: number, fraction: number): void;
-  onProgress(fn: (index: number, fraction: number) => void): () => void;
-  /** A bar was pressed: ask the player to show that clip */
-  jump(index: number): void;
-  setJump(fn: ((index: number) => void) | null): void;
+  /** The player: the picture is paused (the bar stops with it) */
+  pause(paused: boolean): void;
 }
 
 export function createStory(): StoryStore {
   let index = 0;
-  const indexListeners = new Set<() => void>();
-  const progressListeners = new Set<(i: number, p: number) => void>();
-  let jumpFn: ((i: number) => void) | null = null;
+  let paused = false;
+  const listeners = new Set<() => void>();
+  const tell = () => listeners.forEach((fn) => fn());
   return {
     getIndex: () => index,
-    subscribe: (fn) => { indexListeners.add(fn); return () => { indexListeners.delete(fn); }; },
-    set(next) {
-      if (next === index) return;
-      index = next;
-      indexListeners.forEach((fn) => fn());
-      progressListeners.forEach((fn) => fn(next, 0));
-    },
-    progress: (i, p) => progressListeners.forEach((fn) => fn(i, p)),
-    onProgress: (fn) => { progressListeners.add(fn); return () => { progressListeners.delete(fn); }; },
-    jump: (i) => jumpFn?.(i),
-    setJump: (fn) => { jumpFn = fn; },
+    getPaused: () => paused,
+    subscribe: (fn) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
+    set(next) { if (next !== index) { index = next; tell(); } },
+    pause(next) { if (next !== paused) { paused = next; tell(); } },
   };
 }
 
-/** The chip, headline and one line under it for the clip on screen */
+/** The chip, headline and one line under it for the shop on screen */
 export const StoryText: React.FC<{ clips: LoginClip[]; story: StoryStore }> = ({ clips, story }) => {
   const index = useSyncExternalStore(story.subscribe, story.getIndex);
   const clip = clips[index];
@@ -59,26 +50,22 @@ export const StoryText: React.FC<{ clips: LoginClip[]; story: StoryStore }> = ({
   );
 };
 
-/** One thin bar per clip, filling as the clip plays; a bar can be pressed to jump to its clip */
-export const StoryBars: React.FC<{ clips: LoginClip[]; story: StoryStore }> = ({ clips, story }) => {
-  const fills = useRef<Array<HTMLSpanElement | null>>([]);
-  useEffect(() => {
-    const paint = (index: number, p: number) => {
-      fills.current.forEach((el, i) => { if (el) el.style.transform = `scaleX(${i < index ? 1 : i > index ? 0 : Math.min(1, Math.max(0, p))})`; });
-    };
-    paint(story.getIndex(), 0);
-    return story.onProgress(paint);
-  }, [story]);
+/** One thin bar per shop: done ones full, the one on screen filling over its time, the next ones empty */
+export const StoryBars: React.FC<{ clips: LoginClip[]; story: StoryStore; still?: boolean }> = ({ clips, story, still }) => {
+  const index = useSyncExternalStore(story.subscribe, story.getIndex);
+  const paused = useSyncExternalStore(story.subscribe, story.getPaused);
   if (clips.length < 2) return null;
   return (
-    <div className="hidden max-w-md gap-2 md:flex">
+    <div className="hidden max-w-md gap-2 md:flex" aria-hidden="true">
       {clips.map((clip, i) => (
-        <button key={clip.id} type="button" onClick={() => story.jump(i)} aria-label={`Show ${clip.category}`}
-          className="group flex h-6 flex-1 items-center">
-          <span className="block h-1 w-full overflow-hidden rounded-full bg-white/30 transition-[height] group-hover:h-1.5">
-            <span ref={(el) => { fills.current[i] = el; }} className="story-fill block h-full origin-left rounded-full bg-white" style={{ transform: 'scaleX(0)' }} />
-          </span>
-        </button>
+        <span key={clip.id} className="block h-1 flex-1 overflow-hidden rounded-full bg-white/30">
+          <span
+            // a new element for each turn of the shop on screen, so its fill starts again from empty
+            key={i === index ? `on-${index}` : 'off'}
+            className={`block h-full origin-left rounded-full bg-white ${i < index ? 'opacity-70' : i > index ? 'scale-x-0' : still ? '' : 'story-progress'}`}
+            style={i === index && !still ? { animationDuration: `${LOGIN_TIMING.showMs}ms`, animationPlayState: paused ? 'paused' : 'running' } : undefined}
+          />
+        </span>
       ))}
     </div>
   );

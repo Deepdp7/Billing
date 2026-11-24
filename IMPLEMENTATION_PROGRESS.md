@@ -544,3 +544,25 @@ Checks
   when it is true. Tests: SuperAdmin `updates.test.ts` (flag on rollback, cleared by a newer publish), engine 101/101.
 - Needs the licence server uploaded to the VPS (Upload Admin Panel and licence server) and the new client build.
   Apps built before 15 Nov (no "+N" in the version) only accept newer versions and cannot be rolled back.
+
+## Sign-in background: real cause of the black screen fixed, PLRMS player (2026-11-25)
+
+- **Black screen with a broken-picture icon on every installed app** was a key bug: the desktop shell hands the engine
+  `HMAC(data key, "apna-billing/sqlite/v1")` (lib.rs `database_key`), but the build encrypted the sign-in media with
+  the raw data key, and the build's smoke test and my test launcher also passed the raw key, so every test passed while
+  every installation decrypted noise. Now `prepare.cjs` derives `shellDatabaseKey` exactly as the shell (checked by
+  running the shell's own Rust code: same key), encrypts with it and gives it to the smoke test. The encrypted header
+  now carries a key check: files made with another key are refused (404 + one log line) instead of served as noise.
+- **The player is now the PLRMS sign-in player** (plrms-demo `LoginHero.tsx`): four clips, each 1920x1080, 24 fps,
+  played at 80 % speed (motion-interpolated, no repeated frames, like PLRMS's), exactly 8.5 s / 204 frames, key picture
+  every 2 s, H.264 only (PLRMS also ships AV1, which low-end PCs decode in software). Each clip plays once with a slow
+  zoom (scale 1 -> 1.09 over 8.5 s); the next fades in over the last 1.2 s; only the visible clip decodes; a hidden
+  window freezes clip, zoom and bar and resumes on the same frame (snapshot canvas). The bars fill by a CSS animation.
+- **Fixed beyond PLRMS** (found by logging every switch): a clip that played a round ago is rewound and the browser puts
+  its player to sleep while it still reports "ready", so at the loop the previous clip could stand on its last frame.
+  The next clip is now reloaded 3 s before its turn, started if not ready at the switch, the current one switches at
+  once if it ends, and every clip has its poster (never black). Lite mode keeps the zoom / fade durations.
+- Verified on the real sealed engine started with the shell's key, 19 checks incl. "the next clip is already moving
+  1.2 s before the previous one ends" at all 9 switches of two rounds (1.19-1.21 s), 24 fps, zoom running, never black,
+  hidden/visible, lite, reduce motion, blocked video. Headless Edge stops drawing frames at times, which delays CSS
+  fades in the test only (shown by the page's animation clock and fixed in the test by drawing continuously).

@@ -1,23 +1,20 @@
 #!/usr/bin/env node
 /**
- * Makes the sign-in screen's background video from the 4 source clips (AI videos, usually 4K).
+ * Makes the sign-in screen's background clips from the 4 source clips (AI videos, usually 4K), with the same settings as
+ * the PLRMS sign-in page (plrms-demo/src/components/layout/LoginHero.tsx), which plays smoothly on every PC:
  *
  *   node scripts/encode-login-videos.mjs               reads branding/login-videos/raw/{1..4}-*.{mp4,mov,webm,mkv}
  *   node scripts/encode-login-videos.mjs --placeholder makes 4 stand-in clips (to build and test the screen first)
  *   node scripts/encode-login-videos.mjs --no-fixes    leaves out the touch-ups listed under CLIPS
  *
- * The result is ONE video, in client/public/login-media/ (its name carries a content hash, so it can be cached for a year
- * and a new video still shows up after an update):
- *   login.<hash>.mp4          1080p30 H.264 high, BT.709, ~10 MB: the 4 shops one after another, each dissolving into
- *                             the next, and the last dissolving into the first. The file starts and ends in the middle
- *                             of that last dissolve, so playing it in a loop has no visible join.
- *   login-<n>-<name>.<hash>.webp   a poster for each shop (its first clean picture), painted before the video starts
+ * Per clip, in client/public/login-media/ (names carry a content hash, so a new clip still shows up after an update):
+ *   <n>-<name>.<hash>.mp4    1920x1080, 24 fps, played at 80% speed (the in-between frames are motion-interpolated, never
+ *                            repeated), exactly 8.5 s (204 frames), a key picture every 2 s, H.264 high, BT.709
+ *   <n>-<name>.<hash>.webp   its first picture, shown before the video starts (and instead of it for "reduce motion")
  * and the list in client/src/lib/loginMedia.generated.ts.
  *
- * Why one file: the screen needs only one video player, one decoder and no switching between files (switching is what
- * stalls, shows black or stutters on slow graphics chips). The player just plays it in a loop.
- * H.264 on purpose: every Windows PC decodes it in hardware (AV1 / VP9 can fall back to slow software decoding).
- * 30 fps: a 60 Hz screen then shows every frame exactly twice (24 fps is shown 3-2-3-2 times: a stutter on camera moves).
+ * H.264 only (PLRMS also ships AV1 WebM): AV1 is decoded by the processor on PCs without AV1 hardware, which most
+ * low-end shop PCs are; H.264 is decoded in hardware on every Windows PC.
  * Needs ffmpeg and ffprobe on PATH.
  */
 import { spawnSync } from 'node:child_process';
@@ -32,14 +29,12 @@ const OUT = path.join(ROOT, 'client', 'public', 'login-media');
 const GENERATED = path.join(ROOT, 'client', 'src', 'lib', 'loginMedia.generated.ts');
 const WORK = path.join(ROOT, 'branding', 'login-videos', '.work');
 const SECONDS = 8;
-const FPS = 30;
-/** Every clip is cut to exactly this many frames (239 = just under 8 s at 30 fps) */
-const CLIP_FRAMES = 239;
-/** The dissolve between two shops, in frames (0.8 s) */
-const OVERLAP = 24;
-/** How long each shop has the screen: its clip minus the dissolve into the next one (215 frames = 7.17 s) */
-const SEGMENT = CLIP_FRAMES - OVERLAP;
-const MAX_VIDEO_BYTES = 14 * 1024 * 1024;
+const FPS = 24;
+/** Played at 80% speed: calmer movement, and more time on each shop */
+const SPEED = 0.8;
+/** Every clip is exactly this long: 8.5 s at 24 fps (the player's timing is built on it) */
+const CLIP_FRAMES = 204;
+const MAX_CLIP_BYTES = 9 * 1024 * 1024;
 const FONT = 'C\\:/Windows/Fonts/segoeuib.ttf'; // placeholder clips only (escaped for ffmpeg's filter syntax)
 
 // Touch-ups for flaws in the owner's own AI clips (the numbers are pixels of the 3840x2160 source). They belong to those
@@ -142,42 +137,16 @@ function touchUp(clip, src, info) {
 }
 
 /**
- * One clip as a 1080p30 working file, nearly lossless (it is encoded again as part of the montage), exactly CLIP_FRAMES
- * frames long. AI video tools often tag their files with the old standard-definition colour matrix (BT.601), while a
- * browser assumes the HD one (BT.709): the colours are converted and tagged here, so every browser and graphics chip
- * shows what the owner saw in the video tool. A 24 fps source gets its missing frames by motion interpolation (the last
- * frame is repeated once first, so the clip is still a full 8 s); a faster one is just resampled.
+ * One finished clip. AI video tools often tag their files with the old standard-definition colour matrix (BT.601),
+ * while a browser assumes the HD one (BT.709): the colours are converted and tagged, so every graphics chip shows what
+ * the owner saw in the video tool. Slowed to 80% by motion interpolation (no repeated frames: they would judder).
  */
-function makeMaster(src, srcFps, dest) {
-  const rate = srcFps && srcFps < FPS - 0.5
-    ? `tpad=stop_mode=clone:stop=1,minterpolate=fps=${FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1`
-    : `fps=${FPS}`;
+function makeClip(src, dest) {
   const vf = 'scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,'
-    + `crop=1920:1080,${rate},format=yuv420p`;
-  ffmpeg(['-i', src, '-t', String(SECONDS), '-vf', vf, '-frames:v', String(CLIP_FRAMES), '-c:v', 'libx264', '-preset', 'fast', '-crf', '12',
-    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-an', dest]);
-}
-
-/**
- * The montage. Clips in play order c1..cN; the picture is built from [cN, c1..cN, c1] with a dissolve between each pair,
- * and only the stretch from the middle of the first dissolve (cN into c1) to the middle of the last one (cN into c1
- * again) is kept. Both ends are in the same place of the same dissolve, so the file loops with no join.
- */
-function makeMontage(masters, dest) {
-  const n = masters.length;
-  const order = [masters[n - 1], ...masters, masters[0]];
-  const dissolve = OVERLAP / FPS;
-  const parts = order.map((_, i) => `[${i}:v]setpts=PTS-STARTPTS,fps=${FPS},format=yuv420p,setsar=1[v${i}]`);
-  let last = 'v0';
-  for (let i = 1; i < order.length; i++) {
-    parts.push(`[${last}][v${i}]xfade=transition=fade:duration=${dissolve.toFixed(6)}:offset=${((i * SEGMENT) / FPS).toFixed(6)}[x${i}]`);
-    last = `x${i}`;
-  }
-  const start = CLIP_FRAMES - OVERLAP / 2;
-  parts.push(`[${last}]trim=start_frame=${start}:end_frame=${start + SEGMENT * n},setpts=PTS-STARTPTS[v]`);
-  ffmpeg([...order.flatMap((f) => ['-i', f]), '-filter_complex', parts.join(';'), '-map', '[v]', '-frames:v', String(SEGMENT * n),
-    // a key picture every 2 s (and at the very start), none added by scene detection: even work for the decoder, quick jumps
-    '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'slow', '-tune', 'film', '-crf', '23', '-maxrate', '4M', '-bufsize', '8M',
+    + `crop=1920:1080,setpts=PTS/${SPEED},minterpolate=fps=${FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,format=yuv420p`;
+  ffmpeg(['-i', src, '-vf', vf, '-frames:v', String(CLIP_FRAMES),
+    // a key picture every 2 s (and at the very start), none added by scene detection: even work for the decoder
+    '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'slow', '-tune', 'film', '-crf', '20', '-maxrate', '8M', '-bufsize', '16M',
     '-g', String(FPS * 2), '-keyint_min', String(FPS * 2), '-sc_threshold', '0', '-pix_fmt', 'yuv420p',
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv', '-movflags', '+faststart', '-an', dest]);
 }
@@ -187,7 +156,9 @@ fs.mkdirSync(WORK, { recursive: true });
 fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(OUT, { recursive: true });
 
-const masters = [];
+const clips = [];
+const rows = [];
+let failed = false;
 for (const clip of CLIPS) {
   let src;
   if (placeholder) {
@@ -203,71 +174,39 @@ for (const clip of CLIPS) {
     src = path.join(RAW, found);
   }
   const info = probe(src);
-  if (info.duration < SECONDS - 0.5) {
-    console.error(`${path.basename(src)} is only ${info.duration.toFixed(1)} s long: it must be at least ${SECONDS - 0.5} s.`);
+  const need = (CLIP_FRAMES / FPS) * SPEED;
+  if (info.duration < need - 0.05) {
+    console.error(`${path.basename(src)} is only ${info.duration.toFixed(1)} s long: it must be at least ${need.toFixed(1)} s.`);
     process.exit(1);
   }
-  console.log(`Preparing ${clip.n} ${clip.name} (${info.width}x${info.height}, ${info.fps} fps, ${info.duration.toFixed(1)} s)${!placeholder && !noFixes && clip.fix ? ', with its touch-up' : ''}…`);
+  console.log(`Encoding ${clip.n} ${clip.name} (${info.width}x${info.height}, ${info.fps} fps, ${info.duration.toFixed(1)} s)${!placeholder && !noFixes && clip.fix ? ', with its touch-up' : ''}…`);
   src = touchUp(clip, src, info);
-  const master = path.join(WORK, `${clip.n}-master.mp4`);
-  makeMaster(src, info.fps, master);
-  const m = probe(master);
-  if (m.frames !== CLIP_FRAMES) {
-    console.error(`Clip ${clip.n} came out ${m.frames} frames long, not ${CLIP_FRAMES}.`);
-    process.exit(1);
-  }
-  masters.push(master);
+  const tmp = path.join(WORK, `${clip.n}.mp4`);
+  const tmpPoster = path.join(WORK, `${clip.n}.webp`);
+  makeClip(src, tmp);
+  ffmpeg(['-i', tmp, '-frames:v', '1', '-vf', 'scale=1280:-2', '-c:v', 'libwebp', '-quality', '78', tmpPoster]);
+  const video = `${clip.n}-${clip.name}.${hash(tmp)}.mp4`;
+  const poster = `${clip.n}-${clip.name}.${hash(tmpPoster)}.webp`;
+  fs.copyFileSync(tmp, path.join(OUT, video));
+  fs.copyFileSync(tmpPoster, path.join(OUT, poster));
+  clips.push({ id: clip.name, video, poster });
+
+  const m = probe(path.join(OUT, video));
+  const size = fs.statSync(path.join(OUT, video)).size;
+  const ok = size <= MAX_CLIP_BYTES && m.width === 1920 && m.height === 1080 && m.fps === FPS && m.frames === CLIP_FRAMES;
+  if (!ok) failed = true;
+  rows.push([clip.n, clip.name, `${m.width}x${m.height}`, `${m.fps} fps`, `${m.frames} frames`, `${m.duration.toFixed(2)} s`, `${(size / 1048576).toFixed(1)} MB`, ok ? 'ok' : 'WRONG']);
 }
-
-console.log('Joining the four clips into one looping video…');
-const montage = path.join(WORK, 'login.mp4');
-makeMontage(masters, montage);
-
-const video = `login.${hash(montage)}.mp4`;
-fs.copyFileSync(montage, path.join(OUT, video));
-
-// A poster for each shop: the first clean picture of its stretch (just after its dissolve), which is also what the
-// screen shows when the video starts or when someone presses that shop's bar
-const clips = CLIPS.map((clip, i) => {
-  const t = (i * SEGMENT + OVERLAP / 2) / FPS;
-  const tmp = path.join(WORK, `${clip.n}.webp`);
-  ffmpeg(['-ss', t.toFixed(4), '-i', montage, '-frames:v', '1', '-vf', 'scale=1280:-2', '-c:v', 'libwebp', '-quality', '78', tmp]);
-  const poster = `login-${clip.n}-${clip.name}.${hash(tmp)}.webp`;
-  fs.copyFileSync(tmp, path.join(OUT, poster));
-  return { id: clip.name, poster };
-});
 
 fs.rmSync(WORK, { recursive: true, force: true });
 
-const meta = {
-  video,
-  fps: FPS,
-  segmentSeconds: Number((SEGMENT / FPS).toFixed(6)),
-  overlapSeconds: Number((OVERLAP / FPS).toFixed(6)),
-  durationSeconds: Number(((SEGMENT * CLIPS.length) / FPS).toFixed(6)),
-  clips,
-};
+const meta = { clipMs: Math.round((CLIP_FRAMES / FPS) * 1000), fadeMs: 1200, clips };
 fs.writeFileSync(GENERATED, `// Written by scripts/encode-login-videos.mjs. Do not edit by hand.\nexport const LOGIN_MEDIA = ${JSON.stringify(meta, null, 2)};\n`);
 
-// ---------------------------------------------------------------- checks
-const final = probe(path.join(OUT, video));
-const size = fs.statSync(path.join(OUT, video)).size;
-const wantFrames = SEGMENT * CLIPS.length;
-const checks = [
-  ['size', `${(size / 1048576).toFixed(1)} MB`, size <= MAX_VIDEO_BYTES],
-  ['picture', `${final.width}x${final.height}`, final.width === 1920 && final.height === 1080],
-  ['frame rate', `${final.fps} fps`, final.fps === FPS],
-  ['frames', `${final.frames} (want ${wantFrames})`, final.frames === wantFrames],
-  ['length', `${final.duration.toFixed(2)} s (want ${(wantFrames / FPS).toFixed(2)})`, Math.abs(final.duration - wantFrames / FPS) < 0.05],
-];
-console.log(`\n ${video}`);
-let failed = false;
-for (const [what, value, ok] of checks) {
-  if (!ok) failed = true;
-  console.log(`   ${what.padEnd(11)} ${value.padEnd(26)} ${ok ? 'ok' : 'WRONG'}`);
-}
-const total = fs.readdirSync(OUT).reduce((s, f) => s + fs.statSync(path.join(OUT, f)).size, 0);
-console.log(`\n Total in client/public/login-media: ${(total / 1048576).toFixed(1)} MB (${CLIPS.length} posters + the video)`);
+console.log('\n clip  name        picture     rate    frames      length   size     check');
+for (const r of rows) console.log(` ${String(r[0]).padEnd(5)} ${String(r[1]).padEnd(11)} ${r[2].padEnd(11)} ${r[3].padEnd(7)} ${r[4].padEnd(11)} ${r[5].padEnd(8)} ${r[6].padEnd(8)} ${r[7]}`);
+const total = fs.readdirSync(OUT).reduce((t, f) => t + fs.statSync(path.join(OUT, f)).size, 0);
+console.log(`\n Total in client/public/login-media: ${(total / 1048576).toFixed(1)} MB`);
 if (failed) {
   console.error('\nSomething is off (see WRONG above). Make the source clips less busy (less grain / fast motion) if the size is the problem, and run this again.');
   process.exit(1);
