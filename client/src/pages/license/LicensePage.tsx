@@ -79,7 +79,7 @@ export const LicenseActivationPage: React.FC = () => {
             </div>
           )}
           {user && (
-            <button type="button" onClick={logout} className="text-xs font-semibold text-slate-400 hover:text-white">
+            <button type="button" onClick={() => logout()} className="text-xs font-semibold text-slate-400 hover:text-white">
               Signed in as {user.email}. Sign out
             </button>
           )}

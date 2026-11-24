@@ -309,9 +309,21 @@ fn show_startup_error(handle: &AppHandle, text: &str) {
     handle.dialog().message(text).title(TITLE).kind(MessageDialogKind::Error).blocking_show();
 }
 
+/// Stops the local engine. Its input is closed first: the engine then tells the vendor's server the app was closed and
+/// exits by itself (well under a second, at most ~1.5 s offline). Still running after 2 s: it is ended. Either way no
+/// engine is left running after the app closes.
 fn kill_backend(app: &AppHandle) {
     if let Some(state) = app.try_state::<Backend>() {
         if let Some(mut child) = state.0.lock().unwrap().take() {
+            drop(child.stdin.take());
+            let deadline = std::time::Instant::now() + Duration::from_millis(2000);
+            while std::time::Instant::now() < deadline {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+                    Err(_) => break,
+                }
+            }
             let _ = child.kill();
             let _ = child.wait();
         }

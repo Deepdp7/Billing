@@ -113,6 +113,16 @@ export const api = {
     }),
 
   getMe: () => request<{ user: any }>('/auth/me'),
+  /** Tells the local engine who signed out (it tells the vendor). Never waits and never fails: signing out goes on. */
+  reportLogout: (token: string, reason: 'manual' | 'expired') => {
+    try {
+      void fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST', keepalive: true,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ reason }),
+      }).catch(() => {});
+    } catch { /* nothing to tell */ }
+  },
 
   getRegistryMetadata: () => request<any>('/registry/modules'),
 

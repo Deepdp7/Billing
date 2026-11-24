@@ -7,7 +7,8 @@
  *   stdin, first line   JSON {"dbKey": "<64 hex>", "uninstall"?: true}: the database key, never passed through the
  *                       environment; "uninstall" (the uninstaller) only tells the vendor's server and exits
  *   stdout              "APNA_PORT=<n>" once the API listens on 127.0.0.1:<n>; "APNA_UNINSTALLED=<n>" after the report
- *   stdin closes        the shell went away: exit, so no orphan server is left behind
+ *   stdin closes        the shell went away (the app closed): tell the vendor's server (at most ~1.5 s), then exit, so no
+ *                       orphan server is left behind
  * Data dir, license server URL and app version come from the environment the shell sets.
  */
 const path = require('path');
@@ -61,8 +62,20 @@ function readHandshake() {
   });
 }
 
-process.stdin.on('end', () => process.exit(0));
-process.stdin.on('close', () => process.exit(0));
+let serving = false;
+let closing = false;
+function shellGone() {
+  if (closing) return;
+  closing = true;
+  if (!serving) process.exit(0);
+  setTimeout(() => process.exit(0), 1500).unref();
+  Promise.resolve()
+    .then(() => require('../../server/dist/licensing/licenseClient.js').reportClosing())
+    .catch(() => {})
+    .then(() => process.exit(0));
+}
+process.stdin.on('end', shellGone);
+process.stdin.on('close', shellGone);
 
 readHandshake().then((handshake) => {
   if (sealed && !handshake.dbKey) fail('The Apna Billing engine must be started by Apna Billing.');
@@ -83,7 +96,10 @@ readHandshake().then((handshake) => {
   const { startServer } = require('../../server/dist/index.js');
   return startServer(47832).catch((err) => (err && err.code === 'EADDRINUSE' ? startServer(0) : Promise.reject(err)));
 }).then((started) => {
-  if (started) console.log(`APNA_PORT=${started.port}`);
+  if (started) {
+    serving = true;
+    console.log(`APNA_PORT=${started.port}`);
+  }
 }).catch((err) => {
   fail(`Local server failed to start: ${err && err.stack ? err.stack : err}`);
 });

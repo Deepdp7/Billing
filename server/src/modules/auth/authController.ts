@@ -7,7 +7,7 @@ import { config } from '../../config/index.js';
 import { CATEGORY_DEFAULT_MODULES } from '../registry/index.js';
 import { BusinessCategory, UserRole } from '../../types/index.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
-import { backupThenWipe, computeStatus, confirmPasswordReset, deactivateInstallation, joinIfAccountLicensed, markAccountTakenOver, registerCustomer, rememberAccount, requestPasswordReset, serverSignIn } from '../../licensing/licenseClient.js';
+import { backupThenWipe, computeStatus, confirmPasswordReset, deactivateInstallation, joinIfAccountLicensed, markAccountTakenOver, registerCustomer, rememberAccount, reportActivity, requestPasswordReset, serverSignIn } from '../../licensing/licenseClient.js';
 import { emitLicenseChanged } from '../../licensing/events.js';
 import { syncNow } from '../../sync/syncEngine.js';
 import { getBusinessSettings } from '../../services/settingsService.js';
@@ -150,6 +150,14 @@ async function takeOverAccountData(email: string, password: string) {
     .run(bcrypt.hashSync(password, 10), email);
 }
 
+/**
+ * Sign-ins the vendor has heard about since this engine started (shop|user): the first "who am I" of a session that was
+ * already open (the app reopened, still signed in) is told as "opened, already signed in"; one right after a sign-in is not.
+ */
+const announced = new Set<string>();
+const sessionKey = (userId: string) => `${currentShopId()}|${userId}`;
+const activityUser = (u: { name?: string; email?: string; role?: string }) => ({ name: u.name || undefined, email: u.email || undefined, role: u.role || undefined });
+
 function loginToShop(req: Request, res: Response, key: string, email: string, password: string, extra: Record<string, unknown> = {}): void {
   const user = db.prepare(`
     SELECT u.*, b.name as business_name, b.category as business_category, b.status as business_status, b.plan_id
@@ -196,6 +204,8 @@ function loginToShop(req: Request, res: Response, key: string, email: string, pa
   setActiveShop(currentShopId());
   db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id);
   if (user.role === 'BUSINESS_OWNER') rememberAccount(user.id, user.email, password, 'LOGIN');
+  announced.add(sessionKey(user.id));
+  reportActivity('SIGNED_IN', activityUser(user));
   logAudit({ businessId: user.business_id, userId: user.id, action: 'USER_LOGIN', entityType: 'USER', entityId: user.id });
 
   const activeModules = user.business_category 
@@ -526,6 +536,11 @@ export function getCurrentUser(req: AuthenticatedRequest, res: Response): void {
 
   // Opening the app (or switching to this business) makes it the one licence checks and backups run for
   setActiveShop(currentShopId());
+  // The app was opened while this person was still signed in: the vendor hears it once per start
+  if (!announced.has(sessionKey(user.id))) {
+    announced.add(sessionKey(user.id));
+    reportActivity('SESSION_RESUMED', activityUser(user));
+  }
 
   res.json({
     user: {
@@ -549,6 +564,26 @@ export function getCurrentUser(req: AuthenticatedRequest, res: Response): void {
       settings: user.business_id ? getBusinessSettings(user.business_id) : undefined,
     },
   });
+}
+
+/**
+ * Signing out. The app forgets its sign-in itself; this tells the vendor who signed out. Also for a session that has
+ * just ended (expired), so its token is read without checking its age: it only names who it was, nothing is opened.
+ */
+export function logout(req: Request, res: Response): void {
+  const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const reason = req.body?.reason === 'expired' ? 'expired' : 'manual';
+  try {
+    const p = jwt.verify(token, config.jwtSecret, { ignoreExpiration: true }) as { userId?: string; shopId?: string };
+    if (p.userId && p.shopId && shopExists(p.shopId)) {
+      runInShop(p.shopId, () => {
+        const u = db.prepare('SELECT name, email, role FROM users WHERE id = ?').get(p.userId) as any;
+        announced.delete(sessionKey(String(p.userId)));
+        reportActivity('SIGNED_OUT', u ? activityUser(u) : null, reason);
+      });
+    }
+  } catch { /* not a token of this app: nothing to tell */ }
+  res.json({ ok: true });
 }
 
 /** Owner-only. Erases this computer's Apna Billing shop so the same email can sign up again. Nothing outside this app is touched. */

@@ -394,9 +394,9 @@ function deviceInfo() {
   };
 }
 
-async function call(path: string, body: unknown, auth?: { id: string; secret: string }, method: 'POST' | 'GET' = 'POST'): Promise<{ status: number; data: any }> {
+async function call(path: string, body: unknown, auth?: { id: string; secret: string }, method: 'POST' | 'GET' = 'POST', timeoutMs = 15_000): Promise<{ status: number; data: any }> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${config.licensing.serverUrl}/api/client/v1${path}`, {
       method,
@@ -893,6 +893,44 @@ export async function deactivateOtherDevice(id: string) {
   if (!state.installation_id || !state.installation_secret) throw new HttpError(409, 'NOT_ACTIVATED', 'This installation is not activated');
   const { status, data } = await call(`/devices/${encodeURIComponent(id)}/deactivate`, {}, { id: state.installation_id, secret: state.installation_secret });
   if (status !== 200) throw new HttpError(status >= 500 ? 502 : status, data.code || 'DEACTIVATE_FAILED', data.message || 'Could not sign that computer out');
+}
+
+// ---------------- What happens in the app, for the vendor's Live page ----------------
+
+export type AppActivity = 'SIGNED_IN' | 'SESSION_RESUMED' | 'SIGNED_OUT';
+export type ActivityUser = { name?: string; role?: string; email?: string };
+
+/** Who is signed in to each business on this computer (said again when the app closes) */
+const signedInUsers = new Map<string, ActivityUser>();
+
+/**
+ * Tells the vendor's server that someone signed in, opened the app while still signed in, or signed out (and who).
+ * Best effort and in the background: offline, nothing is sent, and signing in never waits for it.
+ */
+export function reportActivity(type: AppActivity, user?: ActivityUser | null, reason?: 'manual' | 'expired'): void {
+  if (!config.licensing.enforce) return;
+  const shop = currentShopId();
+  if (type === 'SIGNED_OUT') signedInUsers.delete(shop);
+  else if (user) signedInUsers.set(shop, user);
+  const creds = getCredentials();
+  if (!creds) return;
+  void call('/activity', { type, ...(user ? { user } : {}), ...(reason ? { reason } : {}) }, creds, 'POST', 10_000).catch(() => {});
+}
+
+/**
+ * The app is closing (the shell went away): every business on this computer says so, with who was signed in, so the
+ * vendor sees "App closed" at once instead of "went offline" a little later. At most ~1.2 s; offline: nothing is sent.
+ */
+export async function reportClosing(): Promise<void> {
+  if (!config.licensing.enforce) return;
+  await Promise.all(allShopIds().map((shop) => runInShop(shop, async () => {
+    const creds = getCredentials();
+    if (!creds) return;
+    const user = signedInUsers.get(shop);
+    try {
+      await call('/activity', { type: 'APP_CLOSED', ...(user ? { user } : {}) }, creds, 'POST', 1200);
+    } catch { /* offline */ }
+  })));
 }
 
 /**

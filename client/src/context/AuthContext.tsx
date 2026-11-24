@@ -12,7 +12,7 @@ interface AuthContextType {
   login: (credentials: { email: string; password: string; shopId?: string; details?: { state?: string; category?: string } }) => Promise<void>;
   register: (data: any) => Promise<void>;
   quickDemoLogin: (type: 'grocery' | 'restaurant' | 'pharmacy' | 'clothing' | 'manufacturing' | 'school' | 'admin') => Promise<void>;
-  logout: () => void;
+  logout: (reason?: 'manual' | 'expired') => void;
   refreshUser: () => Promise<void>;
   /** Opens another business on this computer: at once if it is still signed in here, otherwise its sign-in */
   switchBusiness: (shopId: string) => void;
@@ -85,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (err) {
       console.warn('Session expired or invalid, logging out');
-      logout();
+      logout('expired');
     } finally {
       setIsLoading(false);
       setInitializing(false);
@@ -106,7 +106,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   useEffect(() => {
-    const onEnded = () => logout();
+    const onEnded = () => logout('expired');
     window.addEventListener('apna:session-ended', onEnded);
     return () => window.removeEventListener('apna:session-ended', onEnded);
   }, []);
@@ -156,8 +156,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   /** Signs this business out (other businesses on this computer stay signed in) */
-  const logout = () => {
+  const logout = (reason: 'manual' | 'expired' = 'manual') => {
     const current = localStorage.getItem('apna_billing_token');
+    if (current) api.reportLogout(current, reason === 'expired' ? 'expired' : 'manual');
     saveSessions(Object.fromEntries(Object.entries(sessions()).filter(([, t]) => t !== current)));
     localStorage.removeItem('apna_billing_token');
     setToken(null);

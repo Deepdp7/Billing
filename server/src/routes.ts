@@ -36,6 +36,7 @@ const router = Router();
 // 1. PUBLIC & AUTH ROUTES (/api/v1/auth/* & /api/v1/public/*)
 // ==========================================
 router.post('/auth/login', authCtrl.login);
+router.post('/auth/logout', authCtrl.logout);
 router.post('/auth/register', authCtrl.registerBusiness);
 router.post('/auth/forgot-password', authCtrl.forgotPassword);
 router.post('/auth/reset-password', authCtrl.resetPassword);

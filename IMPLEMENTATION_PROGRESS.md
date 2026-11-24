@@ -620,3 +620,30 @@ Checks
   pictures at the start and 1 of 6 visibly skipped 3; after, 0 dropped and 0 skipped in 10 launches, also with the CPU
   slowed 4x and every core busy. A shop PC is slower than this one, so it should gain more; not measurable from here.
   The engine itself was never the problem (it answers a clip in 3-40 ms). Sign-in checks 19/19.
+
+## Live activity in the admin console (2026-11-24)
+
+- **What the vendor sees** (SuperAdmin: server `activity.ts`, `presence.ts`, migration `010_activity`; panel `Live
+  Activity` page, `activity.tsx`, customer page): every shop's computers right now (online or not, who is signed in to
+  the app, which screen is in use) and a kept, searchable timeline of everything: came online, app closed / went
+  offline, signed in, opened while already signed in, signed out (by hand or session ended), screens in use, trial,
+  licence, uninstalled, taken off the licence, and computers that have not connected for 3 days. Pop-ups as it happens
+  (an uninstall stays until closed, with a sound), a bell with unread count, per-type pop-up switches, and optional
+  Windows alerts when the console is in the background.
+- **Online / offline is instant**: every running app keeps a live stream to the server; its first stream is "online"
+  and its last one closing is "offline" (after 20 s, so a network blip or server restart is not announced; right after
+  a server start the reconnecting apps are noted silently).
+- **Billing app side**: the engine tells the vendor on sign-in (`SIGNED_IN`, name and role), on the first "who am I" of
+  a session that was still open (`SESSION_RESUMED`), on sign-out (`POST /auth/logout`, also for an expired session:
+  its token is read only to name who it was) and when the app closes (`APP_CLOSED`). Closing: the shell now closes the
+  engine's input first; the engine reports (at most ~1.2 s, nothing if offline) and exits by itself; still running
+  after 2 s it is ended. So every engine process still stops when the app closes.
+- **Uninstall** was already reported by the uninstaller (`--uninstall`); it now lands in the timeline as an alert, and
+  the computer is not also announced as "went offline". A computer deleted by hand (no uninstaller, so nobody is told)
+  shows up as "Not seen for days" after 3 days without a connection.
+- Tests: SuperAdmin `test/activity.test.ts` (real server and real streams: sign-in, repeat, resumed, expired sign-out,
+  online, blip not announced, offline after grace, app closed at once, usage, uninstall, quiet computers, feed
+  filters; all 62 pass), Billing `server/test/activity.test.ts` (engine reports to a stand-in vendor server; 103 pass).
+  Checked on screen: Live page, customer page, bell (headless Edge against a local server with the built panel).
+- Live only after: the admin panel + licence server upload (admin app: Upload Admin Panel and licence server), and a
+  Billing client update (the engine reports and the shell's graceful close are in the new build).
