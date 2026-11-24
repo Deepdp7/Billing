@@ -590,3 +590,17 @@ Checks
   paper, so text under it stays readable. Live preview in settings. A shop that had uploaded a stamp picture keeps it.
 - **Desktop app: no text highlighting.** In the desktop window a click, drag or double-click no longer paints text
   blue and pictures can't be dragged out; typing fields (and anything marked `.selectable`) still select and copy.
+
+## The app's own "fill in this field" bubble instead of the browser's (2026-11-24)
+
+- Every form in the app showed the browser's plain white bubble ("Please fill out this field."). `lib/fieldWarnings.ts`
+  (installed in `main.tsx`, like `noTooltips`) cancels it and shows a bubble in the app's style instead: a red "!" icon,
+  a message that names the field ("Business Email is needed", "Password is needed", "Enter a valid email, like
+  name@shop.com", "Please choose Category", "Quantity must be 1 or more"), an arrow to the field, light and dark. The
+  first problem field is focused with a red border and glow. The bubble goes when the person types, leaves the field,
+  presses Esc (which then does not also close the dialog) or after 6 s. One bubble at a time; it follows the field when
+  the panel scrolls. No form had to change: the forms' own rules (`required`, `type="email"`, `min`, `pattern`) are
+  kept, only the way a problem is shown. The field's name is its label, also where the label is written above the box
+  without being linked to it (the usual pattern here), taken only when one field is under that label.
+- Tested in headless Edge on the sealed engine (9 checks): empty sign-in, wrong email, empty password, one bubble at a
+  time, typing / Esc / leaving the field close it, light and dark.

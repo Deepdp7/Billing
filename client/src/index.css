@@ -262,4 +262,31 @@ html.lite .login-fade { transition-duration: 400ms !important; }
 html.lite .story-progress { animation-duration: var(--story-ms, 6.8s) !important; }
 html.lite .hero-fade { transition-duration: var(--fade-ms, 1.2s) !important; }
 html.lite .login-card { background-color: rgb(255 255 255 / 0.96) !important; }
+
+/* "This field needs attention" bubble (lib/fieldWarnings.ts), instead of the browser's own */
+@keyframes field-warning-in { from { opacity: 0; transform: translateY(var(--from-y, -4px)); } to { opacity: 1; transform: none; } }
+.field-warning {
+  position: fixed; z-index: 2000; display: flex; align-items: center; gap: 10px;
+  max-width: min(360px, calc(100vw - 16px)); padding: 9px 14px 9px 10px; border-radius: 12px;
+  background: #fff; color: #0f172a; border: 1px solid #fecaca; font-size: 13px; font-weight: 600; line-height: 1.35;
+  box-shadow: 0 10px 30px -8px rgb(15 23 42 / 0.35), 0 2px 6px rgb(15 23 42 / 0.12);
+  pointer-events: none; animation: field-warning-in 160ms ease-out both;
+}
+.field-warning[data-side='above'] { --from-y: 4px; }
+.field-warning-icon {
+  flex: none; width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center;
+  background: linear-gradient(135deg, #f87171, #dc2626); color: #fff; font-size: 14px; font-weight: 800;
+}
+/* the little arrow pointing at the field */
+.field-warning::after {
+  content: ''; position: absolute; left: calc(var(--arrow-x, 24px) - 6px); width: 12px; height: 12px;
+  background: inherit; border: inherit; transform: rotate(45deg);
+}
+.field-warning[data-side='below']::after { top: -7px; border-right: 0; border-bottom: 0; }
+.field-warning[data-side='above']::after { bottom: -7px; border-left: 0; border-top: 0; }
+html.dark .field-warning { background: #1e293b; color: #f1f5f9; border-color: rgb(248 113 113 / 0.45); }
+/* red border and glow on the field (the app's inputs switch the browser outline off, so it is not an outline) */
+.field-invalid { border-color: #ef4444 !important; box-shadow: 0 0 0 3px rgb(239 68 68 / 0.25) !important; outline: none; }
+/* the bubble is short and should show at once even where animations are off (lite mode) */
+html.lite .field-warning { animation: none !important; }
 html.lite.dark .login-card { background-color: rgb(15 23 42 / 0.96) !important; }

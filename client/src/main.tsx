@@ -18,6 +18,7 @@ import { DesktopFrame } from './components/layout/TitleBar.tsx'
 import { isDesktopApp } from './lib/desktop.ts'
 import { installDesktopShield } from './lib/desktopShield.ts'
 import { disableTooltips } from './lib/noTooltips.ts'
+import { installFieldWarnings } from './lib/fieldWarnings.ts'
 import { installFullscreenKey } from './lib/windowState.ts'
 import { installUiScale } from './lib/uiScale.ts'
 import { applyPerformanceMode } from './lib/performance.ts'
@@ -31,6 +32,8 @@ if (isDesktopApp()) {
 }
 
 disableTooltips()
+// The app's own "fill in this field" bubble, not the browser's
+installFieldWarnings()
 installFullscreenKey()
 installUiScale()
 applyPerformanceMode()
