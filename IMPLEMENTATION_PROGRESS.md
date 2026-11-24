@@ -604,3 +604,19 @@ Checks
   without being linked to it (the usual pattern here), taken only when one field is under that label.
 - Tested in headless Edge on the sealed engine (9 checks): empty sign-in, wrong email, empty password, one bubble at a
   time, typing / Esc / leaving the field close it, light and dark.
+
+## Sign-in video: quiet start, no hiccup at launch (2026-11-24)
+
+- **Cause found by measuring** (cold launch against a freshly started sealed engine in headless Edge, logging every
+  shown picture, stall, dropped picture and media request): the next clip was loaded as soon as the first "could play
+  through". For a local file that is immediately, so the second clip's request went out at 150-190 ms, exactly when the
+  first clip started to move: a second video decoder opened in the most fragile moment, while the app was still
+  starting. On busy computers that freezes the picture for a moment and then skips pictures.
+- **Fixed:** (1) the next clip is only opened once the visible one has played steadily for 2 s (the existing 3 s
+  "warm-up" still makes sure it is ready for the switch); (2) the first shot waits on its still picture (which is its
+  first frame, so the swap is invisible) until the app has finished starting (page loaded, then an idle moment, at most
+  1.5 s); (3) the progress bar and the words wait for the first moving picture, so the bar is never ahead of the video.
+- **Measured, same probe before and after** (cold launches on this fast PC): before, 4 of 6 launches dropped 1-2
+  pictures at the start and 1 of 6 visibly skipped 3; after, 0 dropped and 0 skipped in 10 launches, also with the CPU
+  slowed 4x and every core busy. A shop PC is slower than this one, so it should gain more; not measurable from here.
+  The engine itself was never the problem (it answers a clip in 3-40 ms). Sign-in checks 19/19.

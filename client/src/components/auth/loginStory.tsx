@@ -18,7 +18,8 @@ export interface StoryStore {
 
 export function createStory(): StoryStore {
   let index = 0;
-  let paused = false;
+  // still until the player says the first shot is moving (the bar must not run ahead of the picture)
+  let paused = true;
   const listeners = new Set<() => void>();
   const tell = () => listeners.forEach((fn) => fn());
   return {

@@ -12,7 +12,11 @@ import type { StoryStore } from './loginStory.js';
  *  - a hidden or minimised window freezes everything where it is (clip, zoom and bar) and carries on from the same frame
  *    on return; a snapshot of that frame covers the clip until it really shows it again (a restarted decoder would show
  *    black and replay the last second);
- *  - "reduce motion" or a data-saver setting shows the still pictures; a clip that cannot play shows its picture.
+ *  - "reduce motion" or a data-saver setting shows the still pictures; a clip that cannot play shows its picture;
+ *  - the start is quiet: the first shot waits (on its still picture, which is its first frame) until the app has
+ *    finished starting, and the next clip is only opened once this one has played steadily for 2 s. Opening a second
+ *    video decoder in the very first moments (when the app is still starting) froze the picture for a moment on
+ *    busy computers.
  */
 
 function useMedia(query: string) {
@@ -51,10 +55,37 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
   const epoch = useRef(0);
   // clips that could not play: their still picture is shown instead
   const [broken, setBroken] = useState<ReadonlySet<number>>(() => new Set());
+  // the app has finished starting (the first shot may begin) / the first shot is really moving (the bar may begin)
+  const [settled, setSettled] = useState(false);
+  const [started, setStarted] = useState(false);
+
+  useEffect(() => {
+    if (still) return;
+    let done = false;
+    const go = () => { if (!done) { done = true; setSettled(true); } };
+    const cap = window.setTimeout(go, 1500);
+    const afterLoad = () => {
+      const idle = (window as any).requestIdleCallback as undefined | ((cb: () => void, o: { timeout: number }) => number);
+      if (idle) idle(() => window.setTimeout(go, 150), { timeout: 800 });
+      else window.setTimeout(go, 400);
+    };
+    if (document.readyState === 'complete') afterLoad();
+    else window.addEventListener('load', afterLoad, { once: true });
+    return () => { done = true; clearTimeout(cap); window.removeEventListener('load', afterLoad); };
+  }, [still]);
+
+  useEffect(() => {
+    if (still || clips.length === 0 || broken.has(0)) { setStarted(true); return; }
+    const first = videos.current[0];
+    const on = () => setStarted(true);
+    first?.addEventListener('playing', on, { once: true });
+    const cap = window.setTimeout(on, 4500);
+    return () => { first?.removeEventListener('playing', on); clearTimeout(cap); };
+  }, [still, clips.length, broken]);
 
   // The words and bars follow the shop on screen, and stop with the picture
   useEffect(() => { story.set(index); }, [index, story]);
-  useEffect(() => { story.pause(hidden || frozen); }, [hidden, frozen, story]);
+  useEffect(() => { story.pause(!started || hidden || frozen); }, [started, hidden, frozen, story]);
 
   // A hidden window (or minimised one) freezes the slideshow where it is: the clip, its zoom and the bar all pause
   // together and carry on from the same frame on return, so nothing skips, restarts or shows black.
@@ -147,6 +178,7 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
 
   // only the visible clip decodes; the next one is preloaded so the cross-fade starts on a real frame
   useEffect(() => {
+    if (!still && !settled) return; // the app is still starting: the first shot shows its still picture until then
     const current = videos.current[index];
     const thaw = (i: number) => {
       const c = frames.current[i];
@@ -207,8 +239,9 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
         }, fadeMs + 100),
       );
     });
-    // The next clip starts loading once the visible one has enough to play through (loading both at once splits the
-    // disk and the decoder between them, so the first shot takes longer to appear).
+    // The next clip starts loading once the visible one has played steadily for 2 s. (A local file "can play through" at
+    // once, and opening a second video decoder in the first moments, while the app is still starting, froze the picture
+    // for a moment on busy computers.)
     const next = videos.current[(index + 1) % Math.max(1, clips.length)];
     const loadNext = () => {
       if (next && next.preload !== 'auto') {
@@ -217,16 +250,22 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
       }
     };
     const clear = () => timers.forEach((t) => clearTimeout(t));
-    if (!current || current.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+    if (!current || still) {
       loadNext();
       return clear;
     }
-    current.addEventListener('canplaythrough', loadNext, { once: true });
+    const onTime = () => {
+      if (current.currentTime < 2) return;
+      current.removeEventListener('timeupdate', onTime);
+      loadNext();
+    };
+    current.addEventListener('timeupdate', onTime);
+    onTime();
     return () => {
       clear();
-      current.removeEventListener('canplaythrough', loadNext);
+      current.removeEventListener('timeupdate', onTime);
     };
-  }, [index, still, hidden, clips.length, fadeMs]);
+  }, [index, still, hidden, settled, clips.length, fadeMs]);
 
   // Leaving the screen (signed in): the videos are let go at once
   useEffect(() => () => {
