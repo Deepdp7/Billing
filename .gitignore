@@ -39,4 +39,6 @@ deploy/vps.json
 
 # Sign-in screen videos: the 4K source clips are large (the repository is public); the encoded files are kept
 branding/login-videos/raw/
+# The encoded sign-in videos are the owner's own: not in the public repository (rebuilt by scripts/encode-login-videos.mjs)
+client/public/login-media/
 branding/login-videos/.work/

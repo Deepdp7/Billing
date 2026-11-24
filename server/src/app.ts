@@ -7,6 +7,7 @@ import routes from './routes.js';
 import { errorHandler } from './lib/http.js';
 import { embeddedClientHandler } from './lib/embeddedClient.js';
 import { runtimeOptions } from './config/runtime.js';
+import { encryptedMediaHandler } from './lib/loginMedia.js';
 import jwt from 'jsonwebtoken';
 import { requestSync } from './sync/syncEngine.js';
 import { db } from './db/connection.js';
@@ -99,15 +100,18 @@ export function createApp() {
     res.status(404).json({ code: 'NOT_FOUND', message: `No API route for ${req.method} ${req.originalUrl}` });
   });
 
-  // The sign-in screen's background videos. In the packaged app they are plain files next to the engine (not inside its
-  // executable): a video must be read in ranges to start playing at once and to be skipped through, which the
-  // embedded files cannot do. A missing file is a plain 404, never the app's page.
-  const mediaDir = runtimeOptions().sealed
-    ? path.join(path.dirname(process.execPath), 'login-media')
-    : path.join(config.clientDistDir, 'login-media');
+  // The sign-in screen's background videos. A video must be read in ranges to start playing at once and to be looped,
+  // which the files embedded in the engine cannot do, so they are files next to it. In the packaged app they are
+  // encrypted (nothing in the install folder can be opened as a video; see lib/loginMedia.ts) and decrypted here as
+  // they are served; from source they are the plain files of the client build. A missing file is a plain 404, never
+  // the app's page.
+  const sealed = !!runtimeOptions().sealed;
+  const mediaDir = sealed ? path.join(path.dirname(process.execPath), 'login-media') : path.join(config.clientDistDir, 'login-media');
   if (fs.existsSync(mediaDir)) {
     app.use('/login-media',
-      express.static(mediaDir, { index: false, maxAge: '365d', immutable: true, acceptRanges: true, dotfiles: 'ignore' }),
+      sealed
+        ? encryptedMediaHandler(mediaDir)
+        : express.static(mediaDir, { index: false, maxAge: '365d', immutable: true, acceptRanges: true, dotfiles: 'ignore' }),
       (_req, res) => { res.status(404).end(); });
   }
 

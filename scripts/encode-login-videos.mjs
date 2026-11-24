@@ -7,7 +7,7 @@
  *
  * Per clip, in client/public/login-media/ (names carry a content hash, so they can be cached for a year and a new
  * clip still shows up after an update):
- *   <n>-<name>-1080.<hash>.mp4   1080p30 H.264 high, ~2-4 MB, normal computers
+ *   <n>-<name>-1080.<hash>.mp4   1080p24 H.264 high, BT.709, ~2-4 MB, normal computers
  *   <n>-<name>-720.<hash>.mp4    720p24 H.264 main, ~1 MB, slow computers (the app's lite mode)
  *   <n>-<name>.<hash>.webp       poster, painted at once before the video starts
  * and the list of names in client/src/lib/loginMedia.generated.ts.
@@ -27,18 +27,32 @@ const OUT = path.join(ROOT, 'client', 'public', 'login-media');
 const GENERATED = path.join(ROOT, 'client', 'src', 'lib', 'loginMedia.generated.ts');
 const WORK = path.join(ROOT, 'branding', 'login-videos', '.work');
 const SECONDS = 8;
+// AI video tools make 24 fps: keep it. Converting to 30 would repeat frames unevenly (judder) and cost more to decode.
+const FPS = 24;
 const MAX_1080_BYTES = 4.5 * 1024 * 1024;
 const MAX_720_BYTES = 2 * 1024 * 1024;
 const FONT = 'C\\:/Windows/Fonts/segoeuib.ttf'; // placeholder clips only (escaped for ffmpeg's filter syntax)
 
+// Touch-ups for flaws in the owner's own AI clips (the numbers are pixels of the 3840x2160 source). They belong to those
+// exact clips: when a clip is made again, delete its entry here (or run with --no-fixes to see the clip as it is).
+//  patchOut  paints over something that slides across a plain wall: the wall `fromBelow` pixels lower is copied over it
+//            through a soft-edged mask that follows it (its right edge is at `right` px at time 0 and moves left `speed`
+//            px per second, until `until` s; the mask is `patchW` wide and solid down to `solidH`, `pad` is how much of it lies
+//            past `right`, and it is fully opaque up to `reach` px past `right`)
+//  cropTop   cuts the top of the picture (a fraction of its height) and zooms in on the rest, to lose AI scribble at the edge
 const CLIPS = [
-  { n: 1, name: 'grocery', label: 'Grocery', colors: '0x14532d:0x0f766e' },
-  { n: 2, name: 'pharmacy', label: 'Pharmacy', colors: '0x0c4a6e:0x0e7490' },
+  { n: 1, name: 'grocery', label: 'Grocery', colors: '0x14532d:0x0f766e',
+    // The AI put a sign reading "4K 24 fps" on the teal pillar at the top left; it slides out of frame by 2.4 s
+    fix: { patchOut: { right: 1460, speed: 594, until: 2.9, patchW: 1300, pad: 260, reach: 110, solidH: 580, fromBelow: 1100 } } },
+  { n: 2, name: 'pharmacy', label: 'Pharmacy', colors: '0x0c4a6e:0x0e7490',
+    // Garbled sign lettering is cut off along the top edge
+    fix: { cropTop: 0.05 } },
   { n: 3, name: 'clothing', label: 'Clothing', colors: '0x581c87:0xbe185d' },
   { n: 4, name: 'restaurant', label: 'Restaurant', colors: '0x7c2d12:0xb45309' },
 ];
 
 const placeholder = process.argv.includes('--placeholder');
+const noFixes = process.argv.includes('--no-fixes');
 
 function run(cmd, args) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
@@ -76,10 +90,58 @@ function findRaw(clip) {
   return files.find((f) => f.startsWith(`${clip.n}-`) && /\.(mp4|mov|webm|mkv)$/i.test(f)) || null;
 }
 
+/**
+ * AI video tools often tag their files with the old standard-definition colour matrix (BT.601), while a browser assumes
+ * the HD one (BT.709) for anything it cannot be sure of. The colours are converted to BT.709 here and tagged as such, so
+ * every browser and graphics chip shows what the owner saw in the video tool.
+ */
 function encode(src, w, h, fps, profile, crf, maxrate, bufsize, gop, dest) {
-  const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},fps=${fps},format=yuv420p`;
-  ffmpeg(['-i', src, '-t', String(SECONDS), '-vf', vf, '-c:v', 'libx264', '-profile:v', profile, '-preset', 'slow', '-crf', String(crf),
-    '-maxrate', maxrate, '-bufsize', bufsize, '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0', '-movflags', '+faststart', '-an', dest]);
+  const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,`
+    + `crop=${w}:${h},fps=${fps},format=yuv420p`;
+  ffmpeg(['-i', src, '-t', String(SECONDS), '-vf', vf, '-c:v', 'libx264', '-profile:v', profile, '-preset', 'slow', '-tune', 'film', '-crf', String(crf),
+    '-maxrate', maxrate, '-bufsize', bufsize, '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0',
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
+    '-movflags', '+faststart', '-an', dest]);
+}
+
+/**
+ * Applies a clip's touch-ups (see CLIPS) once, at full size, into a near-lossless working file the encodes start from.
+ * Returns the file to encode from (the source itself when there is nothing to fix).
+ */
+function touchUp(clip, src, info) {
+  const fix = !placeholder && !noFixes && clip.fix;
+  if (!fix) return src;
+  const out = path.join(WORK, `${clip.n}-fixed.mp4`);
+  const k = info.width / 3840; // the numbers are for a 4K source
+  const px = (v) => Math.round(v * k);
+  const common = ['-t', String(SECONDS), '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '8', '-pix_fmt', 'yuv420p', out];
+  if (fix.cropTop) {
+    // 16:9 again after the cut: the same share is taken off the sides, centred
+    const h = Math.floor((info.height * (1 - fix.cropTop)) / 2) * 2;
+    const w = Math.floor(((h * 16) / 9) / 2) * 2;
+    ffmpeg(['-i', src, '-vf', `crop=${w}:${h}:${Math.floor((info.width - w) / 2 / 2) * 2}:${info.height - h},scale=${info.width}:${info.height}:flags=lanczos`, ...common]);
+  } else if (fix.patchOut) {
+    const f = fix.patchOut;
+    const H = info.height - px(f.fromBelow); // the part of the picture that is moved up
+    const mw = px(f.patchW);
+    const mh = px(f.solidH) + px(120);
+    const x = `(${px(f.right)}-${px(f.speed)}*t-${px(f.patchW - f.pad)})`; // the mask's left edge at time t (can be off the picture)
+    const graph = [
+      '[0:v]split=2[base][src]',
+      // the wall below, moved up (so each point takes its colour from the same place, `fromBelow` px lower)
+      `[src]crop=${info.width}:${H}:0:${px(f.fromBelow)},format=yuv444p[low]`,
+      // a soft-edged mask (opaque in the middle, fading out over ~40 px: no hard seam), carried to where the sign is now
+      `color=c=black:s=${info.width}x${H}:r=24,format=yuv444p[canvas]`,
+      `color=c=black:s=${mw}x${mh}:r=24,drawbox=x=${px(80)}:y=-${px(300)}:w=${px(f.patchW - f.pad + f.reach - 80)}:h=${px(f.solidH + 300)}:color=white:t=fill,boxblur=${px(50)}:2,format=yuv444p[mask]`,
+      `[canvas][mask]overlay=x='${x}':y=0:format=yuv444[moving]`,
+      // video black is level 16, white 235: stretched to 0..255, so "transparent" is really transparent and "solid" really solid
+      `[moving]lutyuv=y='clip((val-16)*255/219,0,255)'[alpha]`,
+      '[low][alpha]alphamerge[soft]',
+      `[base][soft]overlay=x=0:y=0:enable='lt(t,${f.until})':format=auto[v]`,
+    ].join(';');
+    ffmpeg(['-i', src, '-filter_complex', graph, '-map', '[v]', ...common]);
+  }
+  return out;
 }
 
 fs.rmSync(WORK, { recursive: true, force: true });
@@ -110,14 +172,15 @@ for (const clip of CLIPS) {
     console.error(`${path.basename(src)} is only ${info.duration.toFixed(1)} s long: it must be at least ${SECONDS - 0.5} s.`);
     process.exit(1);
   }
-  console.log(`Encoding ${clip.n} ${clip.name} (${info.width}x${info.height}, ${info.duration.toFixed(1)} s, ${info.codec})…`);
+  console.log(`Encoding ${clip.n} ${clip.name} (${info.width}x${info.height}, ${info.duration.toFixed(1)} s, ${info.codec})${!placeholder && !noFixes && clip.fix ? ', with its touch-up' : ''}…`);
+  src = touchUp(clip, src, info);
 
   const t1080 = path.join(WORK, `${clip.n}-1080.mp4`);
   const t720 = path.join(WORK, `${clip.n}-720.mp4`);
   const tPoster = path.join(WORK, `${clip.n}.webp`);
-  encode(src, 1920, 1080, 30, 'high', 23, '4M', '8M', 60, t1080);
-  encode(src, 1280, 720, 24, 'main', 25, '1.6M', '3.2M', 48, t720);
-  ffmpeg(['-ss', '0.4', '-i', t1080, '-frames:v', '1', '-vf', 'scale=1280:-2', '-c:v', 'libwebp', '-quality', '78', tPoster]);
+  encode(src, 1920, 1080, FPS, 'high', 23, '4M', '8M', FPS * 2, t1080);
+  encode(src, 1280, 720, FPS, 'main', 25, '1.6M', '3.2M', FPS * 2, t720);
+  ffmpeg(['-i', t1080, '-frames:v', '1', '-vf', 'scale=1280:-2', '-c:v', 'libwebp', '-quality', '78', tPoster]);
 
   const named = {
     video1080: `${clip.n}-${clip.name}-1080.${hash(t1080)}.mp4`,

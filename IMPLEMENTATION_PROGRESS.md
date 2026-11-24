@@ -474,15 +474,21 @@ Checks
   The old drawn `LoginShowcase` is removed.
 - **Player**: two `<video>` elements only (clip on screen + the next, loaded ~3 s ahead), one timer per clip (no per-frame
   JavaScript), 0.6 s cross-fade, pauses while the window is hidden, frees the videos on leaving the screen. Lite
-  computers (`html.lite`) get the 720p24 files; others 1080p30; both H.264 (hardware decoding on every Windows PC).
+  computers (`html.lite`) get the 720p files; others 1080p; both 24 fps (the clips' own) H.264 (hardware decoding on every Windows PC).
   Reduce-motion, a video that cannot play or a 10 s start-up timeout show the posters instead.
 - **Files**: `scripts/encode-login-videos.mjs` (`--placeholder` makes stand-ins; real clips go in
   `branding/login-videos/raw/{1..4}-*.mp4`, which is git-ignored) writes `client/public/login-media/` (content-hashed
   names, 1080p <= 4.5 MB, 720p <= 2 MB, poster) and `client/src/lib/loginMedia.generated.ts`.
-- **Serving**: videos are plain files next to the engine (`engine/login-media/`), not inside the sealed executable:
-  `server/src/app.ts` serves `/login-media` with range requests (206), one-year immutable caching and a plain 404 for a
-  missing file. `tauri/scripts/prepare.cjs` leaves them out of the embedded client and of the start-up integrity
-  manifest (hashing them would make every start read ~10 MB more) and its smoke test checks 206 / 404.
+- **Serving, encrypted**: in the installed app there is no .mp4 / .webp file. `tauri/scripts/prepare.cjs` encrypts each
+  into `engine/login-media/<opaque name>.dat` (AES-256-CTR, random IV per file; `server/src/lib/loginMedia.ts`, the same
+  code the engine decrypts with). The key is `HMAC(dataKey, "apna-login-media-v1")`: the data key reaches the engine
+  from the shell at every start, so the key is in no file of the installation. The engine (`server/src/app.ts`,
+  `/login-media/<name>.mp4`) decrypts while serving, with range requests (206), `Cache-Control: no-store` (the window
+  keeps no decrypted copy on disk) and a plain 404 for anything else. From source (dev) the plain files are served.
+  This hides the files from anyone browsing the install folder; it is not protection against a person who runs the
+  app (the picture is on the screen, and is served on 127.0.0.1 while the app is open). The files stay out of the
+  start-up integrity manifest (hashing ~18 MB more would slow every start); the build's smoke test checks 206, that the
+  decrypted bytes are an MP4 ("ftyp"), and 404 for a .dat name.
 - **Fixed on the way**: lite mode never removed blur. The CSS build dropped the standard `backdrop-filter: none` from the
   `html.lite` rule and kept only the `-webkit-` one, which Edge / WebView2 ignore. Now only the standard property is
   written and the build emits both.
@@ -490,6 +496,13 @@ Checks
   clip loaded at a time, next clip 3 s ahead, cross-fade, headline + bars, jump by bar, quick double press, hidden
   pauses / visible resumes, typing keeps playing, light / dark / 1280x720 / phone, lite = 720p + no blur + solid card,
   reduce motion = posters that change every 8 s, blocked video = posters).
-- **Still to do (Part C)**: the owner's 4 real videos. Until they are encoded, `client/public/login-media/` holds
-  stand-in clips (gradient + label); do not publish a client update before running
-  `node scripts/encode-login-videos.mjs` with the real ones.
+- **Part C (done)**: the owner's 4 real clips (4K, 24 fps, 8.00 s, with sound) are encoded to 1080p (2.5-3.6 MB) and
+  720p (1.0-1.5 MB), 192 frames each at 24 fps (no frame-rate conversion), sound removed, colours converted from the
+  clips' BT.601 tag to BT.709 and tagged, posters = first frame. Touch-ups for flaws in the AI clips live in `CLIPS` in
+  the encode script: clip 1 had a sign reading "4K 24 fps" on a pillar for its first 2.4 s (the wall below is copied
+  over it through a soft mask that follows it), clip 2 had garbled sign lettering at the top edge (top 5 % cropped,
+  zoomed). When a clip is made again, delete its entry (or run with `--no-fixes`). `client/public/login-media/`
+  (the encoded files) is git-ignored: they are the owner's own and the repository is public.
+- Verified on the real sealed engine started like the shell does: 22 browser checks, byte-for-byte equal output to the
+  original through the engine, ffprobe reads it over HTTP; engine tests 101/101 (new `test/loginMedia.test.ts`: every
+  kind of byte range incl. 60 random ones, wrong/no key, odd names).

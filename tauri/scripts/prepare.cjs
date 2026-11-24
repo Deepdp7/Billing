@@ -69,8 +69,9 @@ function ensureDataKey() {
     throw new Error(`${keyFile} is not the data key this product was built with (fingerprint ${expected}).`);
   }
   if (!expected) fs.writeFileSync(fpFile, fingerprint(key) + '\n');
+  return key;
 }
-ensureDataKey();
+const dataKey = ensureDataKey();
 
 // ---------------------------------------------------------------- server + client
 
@@ -182,15 +183,31 @@ if (process.env.LICENSE_SERVER_CA) {
 
 // ---------------------------------------------------------------- checks + integrity manifest
 
-// The sign-in screen's videos: plain files in engine/login-media, served with range requests by the engine (a video
-// cannot start or loop smoothly from the executable's memory). They are pictures, not code, so they stay out of the
-// integrity manifest: hashing them would make every start read ~10 MB more, which slow computers feel.
+// The sign-in screen's videos and pictures: kept next to the engine (a video cannot start or loop smoothly from the
+// executable's memory), but never as .mp4 / .webp files. Each is encrypted under an opaque name (server/src/lib/
+// loginMedia.ts, compiled to server/dist: the same code the engine decrypts with) and the engine serves it in ranges.
+// The key comes from the data key, which the shell hands to the engine at every start, so it is in no file of the
+// installation. They stay out of the start-up integrity manifest: hashing ~15 MB more would make every start slower
+// on slow computers.
 const mediaSrc = path.join(clientDist, 'login-media');
 const mediaDest = path.join(engineDir, 'login-media');
-if (fs.existsSync(mediaSrc)) {
-  const bad = fs.readdirSync(mediaSrc).filter((f) => !/\.(mp4|webp)$/i.test(f));
+const mediaPlainNames = fs.existsSync(mediaSrc) ? fs.readdirSync(mediaSrc) : [];
+if (mediaPlainNames.length) {
+  const bad = mediaPlainNames.filter((f) => !/\.(mp4|webp)$/i.test(f));
   if (bad.length) throw new Error(`Only .mp4 and .webp belong in login-media: ${bad.join(', ')}`);
-  fs.cpSync(mediaSrc, mediaDest, { recursive: true });
+  const media = require(path.join(root, 'server', 'dist', 'lib', 'loginMedia.js'));
+  const mediaKey = media.deriveMediaKey(dataKey);
+  fs.mkdirSync(mediaDest, { recursive: true });
+  for (const name of mediaPlainNames) {
+    const plain = fs.readFileSync(path.join(mediaSrc, name));
+    const stored = media.encryptMedia(plain, mediaKey);
+    // Check what was written before it is trusted: it must decrypt to exactly the file
+    if (!media.decryptMedia(stored, mediaKey).equals(plain)) throw new Error(`Encrypting ${name} did not round-trip`);
+    fs.writeFileSync(path.join(mediaDest, media.storedName(name)), stored);
+  }
+  const leftover = fs.readdirSync(mediaDest).filter((f) => !/^[0-9a-f]{32}\.dat$/.test(f));
+  if (leftover.length) throw new Error(`Unexpected files in engine/login-media: ${leftover.join(', ')}`);
+  console.log(`Sign-in media: ${mediaPlainNames.length} files encrypted into engine/login-media`);
 }
 
 const shipped = [];
@@ -220,9 +237,8 @@ for (const p of shipped) console.log(`   ${path.relative(engineDir, p).padEnd(28
  */
 function smokeTest(exe) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apna-engine-smoke-'));
-  // A sign-in video next to the engine must be served in ranges (how a video starts at once and loops)
-  const mediaDir = path.join(path.dirname(exe), 'login-media');
-  const video = fs.existsSync(mediaDir) ? fs.readdirSync(mediaDir).find((f) => f.endsWith('.mp4')) || '' : '';
+  // A sign-in video must come out of the engine decrypted and in ranges (how a video starts at once and loops)
+  const video = mediaPlainNames.find((f) => f.endsWith('.mp4')) || '';
   try {
     const script = `
       const { spawn } = require('child_process');
@@ -232,7 +248,8 @@ function smokeTest(exe) {
           NODE_OPTIONS: '--require ./no-such-file.js', APNA_LICENSE_ENFORCE: '0' },
         stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true,
       });
-      p.stdin.write(JSON.stringify({ dbKey: '${crypto.randomBytes(32).toString('hex')}' }) + '\\n');
+      // The data key, as the shell gives it: the sign-in media can only be decrypted with it (passed in the environment, not the command line)
+      p.stdin.write(JSON.stringify({ dbKey: process.env.SMOKE_DBKEY }) + '\\n');
       let out = '';
       let ok = false;
       const t = setTimeout(() => { console.error('engine did not start'); p.kill(); }, 30000);
@@ -251,10 +268,13 @@ function smokeTest(exe) {
           const video = ${JSON.stringify(video)};
           if (video) {
             const part = await fetch(base + '/login-media/' + video, { headers: { Range: 'bytes=0-999' } });
-            const partOk = part.status === 206 && (await part.arrayBuffer()).byteLength === 1000;
+            const bytes = Buffer.from(await part.arrayBuffer());
+            // A real MP4 starts "....ftyp": only true when the engine decrypted it correctly
+            const partOk = part.status === 206 && bytes.length === 1000 && bytes.subarray(4, 8).toString() === 'ftyp';
             const missing = (await fetch(base + '/login-media/missing.mp4')).status;
-            if (!partOk || missing !== 404) console.error('sign-in videos not served in ranges:', part.status, missing);
-            ok = ok && partOk && missing === 404;
+            const asFile = (await fetch(base + '/login-media/' + video.replace(/\\.mp4$/, '.dat'))).status;
+            if (!partOk || missing !== 404 || asFile !== 404) console.error('sign-in videos not served as expected:', part.status, bytes.subarray(4, 8).toString(), missing, asFile);
+            ok = ok && partOk && missing === 404 && asFile === 404;
           }
         } finally {
           p.stdin.end(); // the engine exits when its shell goes away
@@ -262,7 +282,7 @@ function smokeTest(exe) {
       });
       p.on('exit', () => { clearTimeout(t); process.exitCode = ok ? 0 : 1; });
     `;
-    execFileSync(process.execPath, ['-e', script], { stdio: 'inherit' });
+    execFileSync(process.execPath, ['-e', script], { stdio: 'inherit', env: { ...process.env, SMOKE_DBKEY: dataKey } });
   } finally {
     fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
