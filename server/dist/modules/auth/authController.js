@@ -9,6 +9,7 @@ exports.createBusinessWithOwner = createBusinessWithOwner;
 exports.forgotPassword = forgotPassword;
 exports.resetPassword = resetPassword;
 exports.getCurrentUser = getCurrentUser;
+exports.logout = logout;
 exports.eraseShop = eraseShop;
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
@@ -159,6 +160,13 @@ async function takeOverAccountData(email, password) {
     connection_js_1.db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE LOWER(email) = LOWER(?) AND role = 'BUSINESS_OWNER'")
         .run(bcryptjs_1.default.hashSync(password, 10), email);
 }
+/**
+ * Sign-ins the vendor has heard about since this engine started (shop|user): the first "who am I" of a session that was
+ * already open (the app reopened, still signed in) is told as "opened, already signed in"; one right after a sign-in is not.
+ */
+const announced = new Set();
+const sessionKey = (userId) => `${(0, shops_js_1.currentShopId)()}|${userId}`;
+const activityUser = (u) => ({ name: u.name || undefined, email: u.email || undefined, role: u.role || undefined });
 function loginToShop(req, res, key, email, password, extra = {}) {
     const user = connection_js_1.db.prepare(`
     SELECT u.*, b.name as business_name, b.category as business_category, b.status as business_status, b.plan_id
@@ -197,6 +205,8 @@ function loginToShop(req, res, key, email, password, extra = {}) {
     connection_js_1.db.prepare("UPDATE users SET last_login_at = datetime('now') WHERE id = ?").run(user.id);
     if (user.role === 'BUSINESS_OWNER')
         (0, licenseClient_js_1.rememberAccount)(user.id, user.email, password, 'LOGIN');
+    announced.add(sessionKey(user.id));
+    (0, licenseClient_js_1.reportActivity)('SIGNED_IN', activityUser(user));
     (0, auditService_js_1.logAudit)({ businessId: user.business_id, userId: user.id, action: 'USER_LOGIN', entityType: 'USER', entityId: user.id });
     const activeModules = user.business_category
         ? (index_js_2.CATEGORY_DEFAULT_MODULES[user.business_category] || ['pos_billing', 'products', 'inventory', 'customers', 'invoices'])
@@ -475,6 +485,11 @@ function getCurrentUser(req, res) {
         : [];
     // Opening the app (or switching to this business) makes it the one licence checks and backups run for
     (0, shops_js_1.setActiveShop)((0, shops_js_1.currentShopId)());
+    // The app was opened while this person was still signed in: the vendor hears it once per start
+    if (!announced.has(sessionKey(user.id))) {
+        announced.add(sessionKey(user.id));
+        (0, licenseClient_js_1.reportActivity)('SESSION_RESUMED', activityUser(user));
+    }
     res.json({
         user: {
             shopId: (0, shops_js_1.currentShopId)(),
@@ -497,6 +512,26 @@ function getCurrentUser(req, res) {
             settings: user.business_id ? (0, settingsService_js_1.getBusinessSettings)(user.business_id) : undefined,
         },
     });
+}
+/**
+ * Signing out. The app forgets its sign-in itself; this tells the vendor who signed out. Also for a session that has
+ * just ended (expired), so its token is read without checking its age: it only names who it was, nothing is opened.
+ */
+function logout(req, res) {
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const reason = req.body?.reason === 'expired' ? 'expired' : 'manual';
+    try {
+        const p = jsonwebtoken_1.default.verify(token, index_js_1.config.jwtSecret, { ignoreExpiration: true });
+        if (p.userId && p.shopId && (0, shops_js_1.shopExists)(p.shopId)) {
+            (0, shops_js_1.runInShop)(p.shopId, () => {
+                const u = connection_js_1.db.prepare('SELECT name, email, role FROM users WHERE id = ?').get(p.userId);
+                announced.delete(sessionKey(String(p.userId)));
+                (0, licenseClient_js_1.reportActivity)('SIGNED_OUT', u ? activityUser(u) : null, reason);
+            });
+        }
+    }
+    catch { /* not a token of this app: nothing to tell */ }
+    res.json({ ok: true });
 }
 /** Owner-only. Erases this computer's Apna Billing shop so the same email can sign up again. Nothing outside this app is touched. */
 async function eraseShop(req, res) {

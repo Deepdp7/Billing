@@ -19,6 +19,7 @@ exports.deleteCategory = deleteCategory;
 const crypto_1 = __importDefault(require("crypto"));
 const zod_1 = require("zod");
 const connection_js_1 = require("../../db/connection.js");
+const paging_js_1 = require("../../lib/paging.js");
 const http_js_1 = require("../../lib/http.js");
 const auditService_js_1 = require("../../services/auditService.js");
 const exportService_js_1 = require("../../services/exportService.js");
@@ -76,8 +77,16 @@ function getProducts(req, res) {
     }
     // A scanned code: the product's barcode, or its SKU (stickers print the SKU when there is no barcode)
     if (code) {
-        conditions.push('(p.barcode = ? OR p.sku = ? COLLATE NOCASE)');
-        params.push(code, code);
+        // The barcode first, then the SKU: each through its own index (asked together, SQLite read every product)
+        const byBarcode = connection_js_1.db.prepare('SELECT 1 FROM products WHERE business_id = ? AND is_active = 1 AND barcode = ? LIMIT 1').get(req.businessId, code);
+        if (byBarcode) {
+            conditions.push('p.barcode = ?');
+            params.push(code);
+        }
+        else {
+            conditions.push('p.sku = ? COLLATE NOCASE');
+            params.push(code);
+        }
     }
     if (categoryId) {
         conditions.push('p.category_id = ?');
@@ -90,11 +99,16 @@ function getProducts(req, res) {
     if (lowStockOnly === 'true')
         conditions.push('p.track_stock = 1 AND p.stock_quantity <= p.low_stock_threshold');
     const where = conditions.join(' AND ');
-    const total = connection_js_1.db.prepare(`SELECT COUNT(*) AS c FROM products p WHERE ${where}`).get(...params).c;
+    // A search or a scanned code is not counted (see lib/paging.ts); a plain list up to COUNT_CAP
+    const counted = search || code || barcode ? undefined : (0, paging_js_1.cappedCount)(connection_js_1.db, `FROM products p WHERE ${where}`, params);
+    // A scanned or typed code finds one or two products through the barcode / code indexes; walking the A-Z index for it
+    // (what SQLite does when asked for name order) reads every product. "+" keeps the name index out of it.
+    const order = code || barcode ? '+p.name COLLATE NOCASE' : 'p.name COLLATE NOCASE';
     const products = connection_js_1.db.prepare(`
     SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id
-    WHERE ${where} ORDER BY p.name COLLATE NOCASE ASC LIMIT ? OFFSET ?`).all(...params, limit, (page - 1) * limit);
-    res.json({ data: products.map(withExtras), pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } });
+    WHERE ${where} ORDER BY ${order} ASC LIMIT ? OFFSET ?`).all(...params, limit + 1, (page - 1) * limit);
+    const out = (0, paging_js_1.pageOf)(products, page, limit, counted);
+    res.json({ data: out.data.map(withExtras), pagination: out.pagination });
 }
 function createProduct(req, res) {
     const p = (0, http_js_1.parse)(productSchema, req.body);

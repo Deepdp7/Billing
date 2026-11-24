@@ -112,9 +112,10 @@ function deleteCustomer(req, res) {
             : `You hold ${amount} of ${cust.name}'s money as advance. Return it first (₹ button), then delete.`);
     }
     const history = connection_js_1.db.prepare(`SELECT
-      (SELECT COUNT(*) FROM invoices WHERE customer_id = ?) +
-      (SELECT COUNT(*) FROM payments WHERE customer_id = ?) +
-      (SELECT COUNT(*) FROM credit_notes WHERE customer_id = ?) AS c`).get(cust.id, cust.id, cust.id).c;
+      (SELECT COUNT(*) FROM invoices WHERE business_id = ? AND customer_id = ?) +
+      (SELECT COUNT(*) FROM payments WHERE business_id = ? AND customer_id = ?) +
+      (SELECT COUNT(*) FROM credit_notes WHERE business_id = ? AND customer_id = ?) AS c`)
+        .get(cust.business_id, cust.id, cust.business_id, cust.id, cust.business_id, cust.id).c;
     if (history > 0) {
         if (req.query.mode !== 'deactivate') {
             throw new http_js_1.HttpError(409, 'HAS_HISTORY', 'Customer has invoices or payments and cannot be deleted. Deactivate the customer instead.');
