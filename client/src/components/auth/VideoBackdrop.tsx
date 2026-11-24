@@ -298,8 +298,8 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
             key={clip.id}
             // The picture is never scaled or moved: a zoom changes it by a fraction of a pixel on every screen refresh
             // while the video changes 24 times a second, and that beat makes the whole picture swim like a shaking camera
+            // (no will-change hint: moving it from one clip to the next at the switch rebuilt the layers mid-fade)
             className={`hero-fade absolute inset-0 ${i === index ? 'opacity-100' : 'opacity-0'}`}
-            style={i === index ? { willChange: 'opacity' } : undefined}
           >
             <video
               ref={(el) => { videos.current[i] = el; }}

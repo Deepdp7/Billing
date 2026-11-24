@@ -45,13 +45,15 @@ export const LOGIN_CLIPS: LoginClip[] = LOGIN_MEDIA.clips.flatMap((c) => (WORDS[
 
 /**
  * The timing, as on the PLRMS sign-in page: every clip is exactly clipMs long and plays once; the next one fades in over
- * the last fadeMs, so the next shot is already moving while this one ends (nothing freezes on a last frame, nothing
- * loops). Each shop is on screen for showMs.
+ * fadeMs, so the next shot is already moving while this one ends (nothing loops). The fade starts SPARE_MS earlier
+ * than it strictly has to: on a slow computer the next clip can take a moment to start, and the one going out must
+ * still be moving (not standing on its last frame) until it has faded away. Each shop is on screen for showMs.
  */
+const SPARE_MS = 500;
 export const LOGIN_TIMING = {
   clipMs: LOGIN_MEDIA.clipMs,
   fadeMs: LOGIN_MEDIA.fadeMs,
-  showMs: LOGIN_MEDIA.clipMs - LOGIN_MEDIA.fadeMs,
+  showMs: LOGIN_MEDIA.clipMs - LOGIN_MEDIA.fadeMs - SPARE_MS,
 };
 
 /** Shown when there are no clips at all (the screen then has just its dark background) */

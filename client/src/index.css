@@ -252,14 +252,14 @@ html.lite *, html.lite ::before, html.lite ::after {
    pictures cross-fade. The picture itself never moves or scales (a slow zoom made the video look like a shaking camera).
    The lengths come from the clips (--story-ms, --fade-ms, set by StoryBars and VideoBackdrop). */
 @keyframes story-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-.story-progress { animation: story-progress var(--story-ms, 6.8s) linear forwards; }
+.story-progress { animation: story-progress var(--story-ms, 6.3s) linear forwards; }
 .hero-fade { transition: opacity var(--fade-ms, 1.2s) ease; }
 @media (prefers-reduced-motion: reduce) { .story-progress { animation: none; } }
 /* Lite mode removes every transition and all blur: keep the picture's cross-fade (shorter), and give the card a solid
    background, because a see-through card over moving video needs the blur to be readable */
 html.lite .login-fade { transition-duration: 400ms !important; }
 /* Lite mode keeps the sign-in background's own slow movements (they are what the screen is) */
-html.lite .story-progress { animation-duration: var(--story-ms, 6.8s) !important; }
+html.lite .story-progress { animation-duration: var(--story-ms, 6.3s) !important; }
 html.lite .hero-fade { transition-duration: var(--fade-ms, 1.2s) !important; }
 html.lite .login-card { background-color: rgb(255 255 255 / 0.96) !important; }
 

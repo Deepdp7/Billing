@@ -131,10 +131,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
               <Zap className="w-7 h-7 text-white fill-white" />
             </div>
             <div>
-              <h1 className="text-3xl font-extrabold tracking-tight font-['Outfit'] text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.4)]">
+              <h1 className="text-3xl font-extrabold tracking-tight font-['Outfit'] text-white [text-shadow:0_2px_8px_rgba(0,0,0,0.4)]">
                 Apna Billing
               </h1>
-              <p className="text-xs text-emerald-300 font-semibold tracking-wide uppercase drop-shadow-[0_1px_4px_rgba(0,0,0,0.5)]">
+              <p className="text-xs text-emerald-300 font-semibold tracking-wide uppercase [text-shadow:0_1px_4px_rgba(0,0,0,0.5)]">
                 All-in-One Multi-Category Billing Platform
               </p>
             </div>

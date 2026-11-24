@@ -49,6 +49,8 @@ pub struct Style {
     pub accent: u32,
     /// Window size in logical pixels (the app's window gets the same)
     pub size: (f64, f64),
+    /// Cover the whole work area instead (the app opens maximized, so the hand-over cannot be seen)
+    pub fill: bool,
 }
 
 /// The open start screen. Its window lives on its own thread; this only holds what is needed to close it.
@@ -281,8 +283,8 @@ pub fn show(style: Style) -> Option<Splash> {
         let mut area: RECT = std::mem::zeroed();
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut area as *mut RECT as *mut _, 0);
         let (aw, ah) = (area.right - area.left, area.bottom - area.top);
-        let w = ((style.size.0 * scale).round() as i32).min(aw);
-        let h = ((style.size.1 * scale).round() as i32).min(ah);
+        let w = if style.fill { aw } else { ((style.size.0 * scale).round() as i32).min(aw) };
+        let h = if style.fill { ah } else { ((style.size.1 * scale).round() as i32).min(ah) };
         let (x, y) = (area.left + (aw - w) / 2, area.top + (ah - h) / 2);
 
         let hwnd = CreateWindowExW(
@@ -307,8 +309,9 @@ pub fn show(style: Style) -> Option<Splash> {
         let state = Box::into_raw(Box::new(draw_still(window_dc, w, h, scale, &style, icon)));
         ReleaseDC(hwnd, window_dc);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, state as isize);
-        // Rounded corners like the app's window on Windows 11 (ignored on Windows 10)
-        let round: u32 = 2; // DWMWCP_ROUND
+        // Corners like the app's window on Windows 11 (ignored on Windows 10): square when it fills the screen, as a
+        // maximized window has, rounded otherwise
+        let round: u32 = if style.fill { 1 } else { 2 }; // DWMWCP_DONOTROUND / DWMWCP_ROUND
         DwmSetWindowAttribute(hwnd, 33, &round as *const u32 as *const _, 4); // DWMWA_WINDOW_CORNER_PREFERENCE
         ShowWindow(hwnd, SW_SHOW);
         trace("start screen on screen");

@@ -386,6 +386,10 @@ fn show_window(w: &tauri::WebviewWindow) {
     splash::trace("window shown");
     let _ = w.show();
     let _ = w.unminimize();
+    // Always opens maximized (on every computer and every start); the restore button gives the normal window
+    if !w.is_maximized().unwrap_or(true) {
+        let _ = w.maximize();
+    }
     let _ = w.set_focus();
 }
 
@@ -500,6 +504,7 @@ pub fn run() {
             track: if dark { 0x343439 } else { 0xE2E8F0 },
             accent: 0x10B981,
             size: (1366.0, 860.0),
+            fill: true,
         })
     } else {
         None
@@ -625,12 +630,10 @@ pub fn run() {
                         }
                     }
                 });
-            // Exactly where the start screen is, so the hand-over cannot be seen
-            let builder = match place {
-                Some((x, y, w, h)) => builder.position(x, y).inner_size(w, h),
-                None => builder.inner_size(1366.0, 860.0).center(),
-            };
-            builder.build()?;
+            // Maximized from the start, over the same work area as the start screen, so the hand-over cannot be seen and
+            // the page is laid out at its real size before it shows. 1366 x 860, centred, is the size the restore
+            // button gives.
+            builder.inner_size(1366.0, 860.0).center().maximized(true).build()?;
             splash::trace("window created");
             Ok(())
         })

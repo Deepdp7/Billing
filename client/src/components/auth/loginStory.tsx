@@ -43,10 +43,10 @@ export const StoryText: React.FC<{ clips: LoginClip[]; story: StoryStore }> = ({
           <clip.Icon className="h-3.5 w-3.5 text-emerald-300" />{clip.category}
         </span>
       )}
-      <h2 className="font-['Outfit'] text-4xl font-extrabold leading-[1.05] tracking-tight text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.45)] lg:text-5xl">
+      <h2 className="font-['Outfit'] text-4xl font-extrabold leading-[1.05] tracking-tight text-white [text-shadow:0_2px_12px_rgba(0,0,0,0.45)] lg:text-5xl">
         {words.headline}
       </h2>
-      <p className="hidden max-w-md text-sm leading-relaxed text-white/80 drop-shadow-[0_1px_6px_rgba(0,0,0,0.5)] md:block">{words.subline}</p>
+      <p className="hidden max-w-md text-sm leading-relaxed text-white/80 [text-shadow:0_1px_6px_rgba(0,0,0,0.5)] md:block">{words.subline}</p>
     </div>
   );
 };

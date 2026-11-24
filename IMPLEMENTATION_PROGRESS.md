@@ -647,3 +647,22 @@ Checks
   Checked on screen: Live page, customer page, bell (headless Edge against a local server with the built panel).
 - Live only after: the admin panel + licence server upload (admin app: Upload Admin Panel and licence server), and a
   Billing client update (the engine reports and the shell's graceful close are in the new build).
+
+## Opens maximized, stops completely on close, smoother switch between sign-in clips (2026-11-24)
+
+- **Always maximized** (every computer, every start): the start screen now covers the whole work area (square corners,
+  as a maximized window has) and the app's window is built maximized while still hidden, so it is laid out at its real
+  size before it shows and the hand-over from the start screen cannot be seen. The restore button gives a normal
+  1366 x 860 window. Not F11 full screen (that stays on F11).
+- **Start-up order** was already parallel and stays so: the engine starts first on its own thread at program start,
+  the start screen shows at once, the window is made meanwhile, and the window opens on the engine as soon as both are
+  ready.
+- **Closing stops everything**: the shell closes the engine's input; the engine tells the vendor "app closed" and exits
+  by itself (at most ~1.2 s), and is ended after 2 s at the latest. The WebView processes end with the shell. If the
+  shell itself is killed, the engine sees its input close and exits the same way.
+- **Clip switch**: the cross-fade now starts 0.5 s earlier than strictly needed (each shop 6.3 s), so on a slow
+  computer whose next clip takes a moment to start, the clip going out is still moving until it has faded away and is
+  paused only then (before, it could reach its last frame while still visible: "stuck just before the next one").
+  The `will-change` hint that moved from one clip to the next at the switch (rebuilding the layers mid-fade) is gone,
+  and the headline's blurred drop-shadow filter is a plain text-shadow (no filter layer over the moving video).
+  Sign-in checks 19/19, incl. "no clip ever runs out at a switch: 12 starts, 0 ended".
