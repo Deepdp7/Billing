@@ -7,8 +7,10 @@ import type { StoryStore } from './loginStory.js';
  * ever. Made to be light on slow computers:
  *  - two <video> elements only: the clip on screen and the next one (loaded about 3 s before it is needed);
  *  - no JavaScript per frame: the switch is one timer, set when a clip starts playing and set again after any stall;
- *  - computers in lite mode (lib/performance.ts) get the 720p files; faster ones the 1080p files (both H.264, which
- *    Windows decodes in hardware);
+ *  - one 1080p30 H.264 file per clip for every computer (Windows decodes H.264 in hardware, so the processor hardly
+ *    works); 30 fps because a 60 Hz screen then shows every frame exactly twice (no 3-2 stutter on camera moves);
+ *  - nothing re-blurred on top of the moving picture (the sign-in card is solid, not frosted glass), only one poster
+ *    under the videos, and one darkening layer;
  *  - it stops while the window is hidden or minimised, and frees the videos when the screen is left;
  *  - "reduce motion" (Windows setting), a video that cannot play, or a very slow start show the posters instead (the
  *    same pictures, changing every 8 s), and with no files at all just the dark background.
@@ -38,8 +40,7 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
     const els = [videoA.current, videoB.current];
     if (!els[0] || !els[1]) return;
     const vids = els as HTMLVideoElement[];
-    const lite = document.documentElement.classList.contains('lite');
-    const urlOf = (clip: number) => `${LOGIN_MEDIA_URL}${lite ? clips[clip].video720 : clips[clip].video1080}`;
+    const urlOf = (clip: number) => `${LOGIN_MEDIA_URL}${clips[clip].video1080}`;
     const many = clips.length > 1;
 
     let alive = true;
@@ -97,7 +98,8 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
       const v = vids[to];
       const begin = () => {
         if (!alive || mine !== token) return;
-        v.currentTime = 0;
+        // A clip that was just loaded is already at its start: seeking it anyway makes the decoder start over (a hitch)
+        if (v.currentTime > 0.05) v.currentTime = 0;
         v.play().catch(fail);
         slot = to;
         cur = target;
@@ -140,12 +142,12 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
     };
     document.addEventListener('visibilitychange', onVisibility);
 
-    // The bars (a few times a second, straight into the page: no React render)
+    // The bars, four times a second, straight into the page (no React render); the page glides them in between
     const progressTimer = window.setInterval(() => {
       if (document.hidden) return;
       const v = vids[slot];
       if (v.duration > 0) story.progress(cur, v.currentTime / v.duration);
-    }, lite ? 250 : 100);
+    }, 250);
 
     // Start
     setIndex(0);
@@ -198,18 +200,18 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
 
   return (
     <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden bg-slate-950" aria-hidden="true">
-      {/* Posters: the first picture at once, and what shows if the video cannot play */}
-      {clips.map((clip, i) => (
+      {/* Posters: the first picture at once, and what shows if the video cannot play. Under playing video only the current
+          one is in the page (the others would be extra full-screen layers for nothing). */}
+      {clips.map((clip, i) => (mode === 'poster' || i === index) && (
         <img key={clip.id} src={`${LOGIN_MEDIA_URL}${clip.poster}`} alt="" decoding="async" draggable={false}
-          className={`login-fade absolute inset-0 h-full w-full object-cover ${i === index ? 'opacity-100' : 'opacity-0'}`} />
+          className={`absolute inset-0 h-full w-full object-cover ${mode === 'poster' ? `login-fade ${i === index ? 'opacity-100' : 'opacity-0'}` : ''}`} />
       ))}
       {mode === 'video' && [videoA, videoB].map((ref, i) => (
         <video key={i} ref={ref} muted playsInline disablePictureInPicture disableRemotePlayback preload="none" tabIndex={-1}
           className={`login-fade absolute inset-0 h-full w-full object-cover ${front === i ? 'opacity-100' : 'opacity-0'}`} />
       ))}
       {/* Darkening so the words stay readable on any picture: strongest behind the text on the left */}
-      <div className="absolute inset-0 bg-gradient-to-r from-black/75 via-black/40 to-black/10 max-md:bg-black/55" />
-      <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/20" />
+      <div className="login-shade absolute inset-0" />
     </div>
   );
 };

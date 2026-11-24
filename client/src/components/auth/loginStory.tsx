@@ -76,7 +76,7 @@ export const StoryBars: React.FC<{ clips: LoginClip[]; story: StoryStore }> = ({
         <button key={clip.id} type="button" onClick={() => story.jump(i)} aria-label={`Show ${clip.category}`}
           className="group flex h-6 flex-1 items-center">
           <span className="block h-1 w-full overflow-hidden rounded-full bg-white/30 transition-[height] group-hover:h-1.5">
-            <span ref={(el) => { fills.current[i] = el; }} className="block h-full origin-left rounded-full bg-white" style={{ transform: 'scaleX(0)' }} />
+            <span ref={(el) => { fills.current[i] = el; }} className="story-fill block h-full origin-left rounded-full bg-white" style={{ transform: 'scaleX(0)' }} />
           </span>
         </button>
       ))}

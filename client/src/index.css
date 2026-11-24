@@ -224,8 +224,17 @@ html.lite *, html.lite ::before, html.lite ::after {
 @keyframes apna-headline { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .apna-headline { animation: apna-headline 0.5s ease-out both; }
 .login-fade { transition: opacity 600ms ease-in-out; }
+/* One layer darkens the picture (behind the words on the left most, and a little at the bottom and top) */
+.login-shade {
+  background-image: linear-gradient(to right, rgb(0 0 0 / 0.75), rgb(0 0 0 / 0.4) 50%, rgb(0 0 0 / 0.1)),
+    linear-gradient(to top, rgb(0 0 0 / 0.45), transparent 50%, rgb(0 0 0 / 0.2));
+}
+@media (max-width: 767px) { .login-shade { background-image: linear-gradient(rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.55)); } }
+/* The bars get a new value four times a second and glide to it (only a transform: drawn by the graphics chip) */
+.story-fill { transition: transform 250ms linear; }
 /* Lite mode removes every transition and all blur: keep the picture's cross-fade (shorter), and give the card a solid
    background, because a see-through card over moving video needs the blur to be readable */
 html.lite .login-fade { transition-duration: 400ms !important; }
+html.lite .story-fill { transition-duration: 250ms !important; }
 html.lite .login-card { background-color: rgb(255 255 255 / 0.96) !important; }
 html.lite.dark .login-card { background-color: rgb(15 23 42 / 0.96) !important; }

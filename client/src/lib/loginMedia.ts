@@ -13,7 +13,6 @@ export interface LoginClip {
   headline: string;
   subline: string;
   video1080: string;
-  video720: string;
   poster: string;
 }
 

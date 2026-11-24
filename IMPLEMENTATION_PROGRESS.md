@@ -506,3 +506,11 @@ Checks
 - Verified on the real sealed engine started like the shell does: 22 browser checks, byte-for-byte equal output to the
   original through the engine, ffprobe reads it over HTTP; engine tests 101/101 (new `test/loginMedia.test.ts`: every
   kind of byte range incl. 60 random ones, wrong/no key, odd names).
+- **Smoother (2026-11-25)**: clips are 1080p **30 fps** for every computer (no 720p copies; 12 MB in all). 24 fps on a
+  60 Hz screen is shown 3-2-3-2 refreshes per frame, which stutters on slow camera moves; 30 fps is shown 2-2 (even).
+  The extra frames are motion-interpolated (`minterpolate`, checked on the fastest motion: the kurta, the waiter),
+  never repeated. The sign-in card is solid (94 % / 90 %), not frosted glass: a blur over moving video is redrawn for
+  every video frame, the costliest effect for a weak graphics chip. Only the current poster sits under the videos, one
+  darkening layer instead of two, no seek when a freshly loaded clip starts (a decoder restart), progress bars updated
+  4x a second and glided by the graphics chip. Verified: 24 browser checks on the sealed engine incl. 30 fps playback
+  and no blur. (Headless Edge has no real graphics chip, so no frame-time numbers are claimed.)

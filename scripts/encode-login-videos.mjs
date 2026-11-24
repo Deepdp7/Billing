@@ -7,8 +7,7 @@
  *
  * Per clip, in client/public/login-media/ (names carry a content hash, so they can be cached for a year and a new
  * clip still shows up after an update):
- *   <n>-<name>-1080.<hash>.mp4   1080p24 H.264 high, BT.709, ~2-4 MB, normal computers
- *   <n>-<name>-720.<hash>.mp4    720p24 H.264 main, ~1 MB, slow computers (the app's lite mode)
+ *   <n>-<name>-1080.<hash>.mp4   1080p30 H.264 high, BT.709, ~3-4 MB, every computer
  *   <n>-<name>.<hash>.webp       poster, painted at once before the video starts
  * and the list of names in client/src/lib/loginMedia.generated.ts.
  *
@@ -27,10 +26,11 @@ const OUT = path.join(ROOT, 'client', 'public', 'login-media');
 const GENERATED = path.join(ROOT, 'client', 'src', 'lib', 'loginMedia.generated.ts');
 const WORK = path.join(ROOT, 'branding', 'login-videos', '.work');
 const SECONDS = 8;
-// AI video tools make 24 fps: keep it. Converting to 30 would repeat frames unevenly (judder) and cost more to decode.
-const FPS = 24;
+// 30 frames a second: a 60 Hz screen shows each frame exactly twice, so slow camera moves glide. 24 fps (what AI tools
+// make) is shown 3-2-3-2 times, which reads as a stutter on a slow dolly; 25 or 26 would be worse still. The frames in
+// between are made by motion interpolation (not by repeating frames, which would judder).
+const FPS = 30;
 const MAX_1080_BYTES = 4.5 * 1024 * 1024;
-const MAX_720_BYTES = 2 * 1024 * 1024;
 const FONT = 'C\\:/Windows/Fonts/segoeuib.ttf'; // placeholder clips only (escaped for ffmpeg's filter syntax)
 
 // Touch-ups for flaws in the owner's own AI clips (the numbers are pixels of the 3840x2160 source). They belong to those
@@ -70,9 +70,10 @@ function run(cmd, args) {
 const ffmpeg = (args) => run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args]);
 
 function probe(file) {
-  const j = JSON.parse(run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,codec_name:format=duration',
+  const j = JSON.parse(run('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,codec_name,r_frame_rate:format=duration',
     '-of', 'json', file]));
-  return { width: j.streams[0].width, height: j.streams[0].height, codec: j.streams[0].codec_name, duration: Number(j.format.duration) };
+  const [num, den] = String(j.streams[0].r_frame_rate || '0/1').split('/').map(Number);
+  return { width: j.streams[0].width, height: j.streams[0].height, codec: j.streams[0].codec_name, duration: Number(j.format.duration), fps: den ? num / den : 0 };
 }
 
 const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex').slice(0, 8);
@@ -95,9 +96,14 @@ function findRaw(clip) {
  * the HD one (BT.709) for anything it cannot be sure of. The colours are converted to BT.709 here and tagged as such, so
  * every browser and graphics chip shows what the owner saw in the video tool.
  */
-function encode(src, w, h, fps, profile, crf, maxrate, bufsize, gop, dest) {
+function encode(src, srcFps, w, h, fps, profile, crf, maxrate, bufsize, gop, dest) {
+  // A slower source gets its missing frames by motion interpolation (the last frame is repeated once first, so the
+  // interpolated clip is still a full 8 s); a source that is already fast enough is just resampled
+  const rate = srcFps && srcFps < fps - 0.5
+    ? `tpad=stop_mode=clone:stop=1,minterpolate=fps=${fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1`
+    : `fps=${fps}`;
   const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,`
-    + `crop=${w}:${h},fps=${fps},format=yuv420p`;
+    + `crop=${w}:${h},${rate},format=yuv420p`;
   ffmpeg(['-i', src, '-t', String(SECONDS), '-vf', vf, '-c:v', 'libx264', '-profile:v', profile, '-preset', 'slow', '-tune', 'film', '-crf', String(crf),
     '-maxrate', maxrate, '-bufsize', bufsize, '-g', String(gop), '-keyint_min', String(gop), '-sc_threshold', '0',
     '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
@@ -176,23 +182,19 @@ for (const clip of CLIPS) {
   src = touchUp(clip, src, info);
 
   const t1080 = path.join(WORK, `${clip.n}-1080.mp4`);
-  const t720 = path.join(WORK, `${clip.n}-720.mp4`);
   const tPoster = path.join(WORK, `${clip.n}.webp`);
-  encode(src, 1920, 1080, FPS, 'high', 23, '4M', '8M', FPS * 2, t1080);
-  encode(src, 1280, 720, FPS, 'main', 25, '1.6M', '3.2M', FPS * 2, t720);
+  encode(src, info.fps, 1920, 1080, FPS, 'high', 23, '4M', '8M', FPS * 2, t1080);
   ffmpeg(['-i', t1080, '-frames:v', '1', '-vf', 'scale=1280:-2', '-c:v', 'libwebp', '-quality', '78', tPoster]);
 
   const named = {
     video1080: `${clip.n}-${clip.name}-1080.${hash(t1080)}.mp4`,
-    video720: `${clip.n}-${clip.name}-720.${hash(t720)}.mp4`,
     poster: `${clip.n}-${clip.name}.${hash(tPoster)}.webp`,
   };
   fs.copyFileSync(t1080, path.join(OUT, named.video1080));
-  fs.copyFileSync(t720, path.join(OUT, named.video720));
   fs.copyFileSync(tPoster, path.join(OUT, named.poster));
   names.push({ id: clip.name, ...named });
 
-  for (const [label, file, max] of [['1080p', named.video1080, MAX_1080_BYTES], ['720p', named.video720, MAX_720_BYTES], ['poster', named.poster, Infinity]]) {
+  for (const [label, file, max] of [['1080p', named.video1080, MAX_1080_BYTES], ['poster', named.poster, Infinity]]) {
     const p = path.join(OUT, file);
     const size = fs.statSync(p).size;
     const meta = label === 'poster' ? { width: 1280, height: '-', duration: 0 } : probe(p);
@@ -205,7 +207,7 @@ for (const clip of CLIPS) {
 fs.rmSync(WORK, { recursive: true, force: true });
 
 const header = `// Written by scripts/encode-login-videos.mjs. Do not edit by hand.\n`;
-fs.writeFileSync(GENERATED, `${header}export const LOGIN_MEDIA_FILES: Array<{ id: string; video1080: string; video720: string; poster: string }> = ${JSON.stringify(names, null, 2)};\n`);
+fs.writeFileSync(GENERATED, `${header}export const LOGIN_MEDIA_FILES: Array<{ id: string; video1080: string; poster: string }> = ${JSON.stringify(names, null, 2)};\n`);
 
 console.log('\n clip  file    size        length    bytes     check');
 for (const r of rows) console.log(` ${String(r[0]).padEnd(5)} ${String(r[1]).padEnd(7)} ${String(r[2]).padEnd(11)} ${String(r[3]).padEnd(9)} ${String(r[4]).padEnd(9)} ${r[5]}`);

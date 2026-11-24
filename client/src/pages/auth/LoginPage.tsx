@@ -151,7 +151,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              <button type="button" onClick={() => quickDemoLogin('grocery')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
+              <button type="button" onClick={() => quickDemoLogin('grocery')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
                   <ShoppingCart className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
                   <span className="font-bold text-xs text-white">Apna Supermart</span>
@@ -159,7 +159,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <p className="text-[11px] text-white/70 leading-tight">Grocery & Retail · Barcodes</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('restaurant')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
+              <button type="button" onClick={() => quickDemoLogin('restaurant')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
                   <UtensilsCrossed className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
                   <span className="font-bold text-xs text-white">Spice Garden Cafe</span>
@@ -167,7 +167,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <p className="text-[11px] text-white/70 leading-tight">Restaurant · KOT & Tables</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('pharmacy')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
+              <button type="button" onClick={() => quickDemoLogin('pharmacy')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
                   <Pill className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
                   <span className="font-bold text-xs text-white">Apollo Care Chemist</span>
@@ -175,7 +175,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <p className="text-[11px] text-white/70 leading-tight">Pharmacy · Batches & Expiry</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('clothing')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
+              <button type="button" onClick={() => quickDemoLogin('clothing')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
                   <Shirt className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
                   <span className="font-bold text-xs text-white">Zara Trends Fashion</span>
@@ -183,7 +183,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <p className="text-[11px] text-white/70 leading-tight">Clothing · Size/Color Matrix</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('manufacturing')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
+              <button type="button" onClick={() => quickDemoLogin('manufacturing')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
                   <Factory className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
                   <span className="font-bold text-xs text-white">Apex Manufacturing</span>
@@ -191,7 +191,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <p className="text-[11px] text-white/70 leading-tight">BOM Recipes · Work Orders</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('school')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
+              <button type="button" onClick={() => quickDemoLogin('school')} disabled={isLoading} className="text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
                   <GraduationCap className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
                   <span className="font-bold text-xs text-white">Vidyaniketan School</span>
@@ -199,7 +199,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
                 <p className="text-[11px] text-white/70 leading-tight">Students & Fee Collection</p>
               </button>
 
-              <button type="button" onClick={() => quickDemoLogin('admin')} disabled={isLoading} className="col-span-1 sm:col-span-2 text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
+              <button type="button" onClick={() => quickDemoLogin('admin')} disabled={isLoading} className="col-span-1 sm:col-span-2 text-left p-3 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 hover:border-emerald-400/70 transition group shadow-lg shadow-black/10">
                 <div className="flex items-center gap-2 mb-1">
                   <Shield className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
                   <span className="font-bold text-xs text-white">Platform Super Admin</span>
@@ -210,7 +210,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
           </div>}
         </div>
 
-        <div className="login-card bg-white/85 dark:bg-slate-900/75 backdrop-blur-xl border border-white/40 dark:border-white/10 p-8 rounded-2xl shadow-2xl text-slate-900 dark:text-white">
+        <div className="login-card bg-white/[0.94] dark:bg-slate-900/[0.9] border border-white/40 dark:border-white/10 p-8 rounded-2xl shadow-2xl text-slate-900 dark:text-white">
           <div className="mb-5">
             <h2 className="text-xl font-bold font-['Outfit']">
               {mode === 'signup'
