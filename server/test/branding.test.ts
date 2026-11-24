@@ -56,6 +56,38 @@ test('logo, colour, signature, stamp, UPI and bank details are saved and printed
   assert.ok(!JSON.stringify(rows).includes('base64'), 'no pictures in the audit log');
 });
 
+test('the stamp: an earlier stamp picture keeps showing; a round seal with its own words, ink, place and strength', async () => {
+  // The previous test saved a stamp picture: with no choice made yet, it is shown as before
+  let b = (await api.get('/app/business/branding')).data.branding;
+  assert.equal(b.stampMode, 'image');
+  assert.equal(b.stampInk, '#1e3a8a', 'stamp-pad blue');
+  assert.equal(b.stampPlace, 'signature');
+  assert.equal(b.stampStrength, 85);
+  assert.equal(b.stampOnReceipt, true);
+
+  const seal = await api.put('/app/business/branding', { stampMode: 'seal', stampTop: 'Test Traders Pvt Ltd', stampBottom: 'Pune, Maharashtra',
+    stampCenter: 'PAID', stampDate: true, stampInk: '#b91c1c', stampPlace: 'watermark', stampStrength: 60, stampSize: 'l', stampOnReceipt: false });
+  assert.equal(seal.status, 200, JSON.stringify(seal.data));
+  b = seal.data.branding;
+  assert.deepEqual([b.stampMode, b.stampTop, b.stampBottom, b.stampCenter, b.stampDate, b.stampInk, b.stampPlace, b.stampStrength, b.stampSize, b.stampOnReceipt],
+    ['seal', 'Test Traders Pvt Ltd', 'Pune, Maharashtra', 'PAID', true, '#b91c1c', 'watermark', 60, 'l', false]);
+
+  // and it is printed with the bill
+  const p = await createProduct(api, { name: 'Stamped', stockQuantity: 2 });
+  const bill = (await api.post('/app/billing/checkout', { items: [{ productId: p.id, quantity: 1, unitPricePaise: 10000 }], paymentMode: 'CASH' })).data.invoice;
+  assert.equal(bill.branding.stampMode, 'seal');
+  assert.equal(bill.branding.stampCenter, 'PAID');
+
+  // a picture's own colours; turning the stamp off
+  assert.equal((await api.put('/app/business/branding', { stampMode: 'image', stampInk: 'original' })).data.branding.stampInk, 'original');
+  assert.equal((await api.put('/app/business/branding', { stampMode: 'off' })).data.branding.stampMode, 'off');
+
+  // refused: unknown modes / places, strength out of range, a word too long for the middle, a colour that is not one
+  for (const bad of [{ stampMode: 'big' }, { stampPlace: 'top' }, { stampStrength: 5 }, { stampStrength: 101 }, { stampCenter: 'A'.repeat(17) }, { stampInk: 'blue' }]) {
+    assert.equal((await api.put('/app/business/branding', bad)).status, 400, JSON.stringify(bad));
+  }
+});
+
 test('a picture can be removed, and only what is sent changes', async () => {
   const r = await api.put('/app/business/branding', { stamp: '' });
   assert.equal(r.status, 200, JSON.stringify(r.data));

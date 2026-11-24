@@ -100,6 +100,22 @@
     min-height: 0 !important;
     max-height: 100%;
   }
+
+  /* The desktop app behaves like an app, not a web page: a click, drag or double-click never paints text blue and
+     pictures can't be dragged out. Typing fields (and anything marked .selectable) still select and copy normally. */
+  html.tauri-shell body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  html.tauri-shell :is(input, textarea, [contenteditable]:not([contenteditable='false']), .selectable),
+  html.tauri-shell .selectable * {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  html.tauri-shell img,
+  html.tauri-shell svg {
+    -webkit-user-drag: none;
+  }
 }
 
 /* Custom sleek scrollbar */
@@ -232,19 +248,21 @@ html.lite *, html.lite ::before, html.lite ::after {
     linear-gradient(to top, rgb(0 0 0 / 0.45), transparent 50%, rgb(0 0 0 / 0.2));
 }
 @media (max-width: 767px) { .login-shade { background-image: linear-gradient(rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.55)); } }
-/* Sign-in background, the PLRMS timing: each clip zooms slowly from 100 % to 109 % over its whole length (8.5 s), and the
-   bar of the shop on screen fills over its time. Both are transforms only: the graphics chip draws them. */
+/* Sign-in background, the PLRMS timing: each clip zooms slowly from 100 % to 109 % over its whole length, and the bar of
+   the shop on screen fills over its time. Both are transforms only: the graphics chip draws them. The lengths come from
+   the clips (--hero-ms, --story-ms, --fade-ms, set by VideoBackdrop and StoryBars). */
 @keyframes hero-zoom { from { transform: scale(1); } to { transform: scale(1.09); } }
-.hero-zoom { animation: hero-zoom 8.5s linear forwards; }
+.hero-zoom { animation: hero-zoom var(--hero-ms, 8s) linear forwards; }
 @keyframes story-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-.story-progress { animation: story-progress 7.3s linear forwards; }
+.story-progress { animation: story-progress var(--story-ms, 6.8s) linear forwards; }
+.hero-fade { transition: opacity var(--fade-ms, 1.2s) ease; }
 @media (prefers-reduced-motion: reduce) { .hero-zoom, .story-progress { animation: none; } }
 /* Lite mode removes every transition and all blur: keep the picture's cross-fade (shorter), and give the card a solid
    background, because a see-through card over moving video needs the blur to be readable */
 html.lite .login-fade { transition-duration: 400ms !important; }
 /* Lite mode keeps the sign-in background's own slow movements (they are what the screen is) */
-html.lite .hero-zoom { animation-duration: 8.5s !important; }
-html.lite .story-progress { animation-duration: 7.3s !important; }
-html.lite .hero-fade { transition-duration: 1.2s !important; }
+html.lite .hero-zoom { animation-duration: var(--hero-ms, 8s) !important; }
+html.lite .story-progress { animation-duration: var(--story-ms, 6.8s) !important; }
+html.lite .hero-fade { transition-duration: var(--fade-ms, 1.2s) !important; }
 html.lite .login-card { background-color: rgb(255 255 255 / 0.96) !important; }
 html.lite.dark .login-card { background-color: rgb(15 23 42 / 0.96) !important; }

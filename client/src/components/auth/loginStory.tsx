@@ -63,7 +63,7 @@ export const StoryBars: React.FC<{ clips: LoginClip[]; story: StoryStore; still?
             // a new element for each turn of the shop on screen, so its fill starts again from empty
             key={i === index ? `on-${index}` : 'off'}
             className={`block h-full origin-left rounded-full bg-white ${i < index ? 'opacity-70' : i > index ? 'scale-x-0' : still ? '' : 'story-progress'}`}
-            style={i === index && !still ? { animationDuration: `${LOGIN_TIMING.showMs}ms`, animationPlayState: paused ? 'paused' : 'running' } : undefined}
+            style={i === index && !still ? { '--story-ms': `${LOGIN_TIMING.showMs}ms`, animationPlayState: paused ? 'paused' : 'running' } as React.CSSProperties : undefined}
           />
         </span>
       ))}

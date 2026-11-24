@@ -8,8 +8,9 @@
  *   node scripts/encode-login-videos.mjs --no-fixes    leaves out the touch-ups listed under CLIPS
  *
  * Per clip, in client/public/login-media/ (names carry a content hash, so a new clip still shows up after an update):
- *   <n>-<name>.<hash>.mp4    1920x1080, 24 fps, played at 80% speed (the in-between frames are motion-interpolated, never
- *                            repeated), exactly 8.5 s (204 frames), a key picture every 2 s, H.264 high, BT.709
+ *   <n>-<name>.<hash>.mp4    1920x1080, 24 fps, at its own speed with the camera's own frames (nothing invented: slowing
+ *                            a clip down needs made-up in-between frames, and those make the picture wobble like a shaking
+ *                            camera), exactly 8 s (192 frames), a key picture every 2 s, H.264 high, BT.709
  *   <n>-<name>.<hash>.webp   its first picture, shown before the video starts (and instead of it for "reduce motion")
  * and the list in client/src/lib/loginMedia.generated.ts.
  *
@@ -30,10 +31,8 @@ const GENERATED = path.join(ROOT, 'client', 'src', 'lib', 'loginMedia.generated.
 const WORK = path.join(ROOT, 'branding', 'login-videos', '.work');
 const SECONDS = 8;
 const FPS = 24;
-/** Played at 80% speed: calmer movement, and more time on each shop */
-const SPEED = 0.8;
-/** Every clip is exactly this long: 8.5 s at 24 fps (the player's timing is built on it) */
-const CLIP_FRAMES = 204;
+/** Every clip is exactly this long: 8 s at 24 fps (the player's timing is built on it) */
+const CLIP_FRAMES = 192;
 const MAX_CLIP_BYTES = 9 * 1024 * 1024;
 const FONT = 'C\\:/Windows/Fonts/segoeuib.ttf'; // placeholder clips only (escaped for ffmpeg's filter syntax)
 
@@ -87,7 +86,7 @@ const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file))
 function makePlaceholder(clip, file) {
   const [a, b] = clip.colors.split(':');
   const text = `drawtext=fontfile='${FONT}':text='${clip.n}  ${clip.label}':fontsize=220:fontcolor=white@0.9:x=(w-text_w)/2+60*sin(t):y=(h-text_h)/2`;
-  ffmpeg(['-f', 'lavfi', '-i', `gradients=s=3840x2160:c0=${a}:c1=${b}:x0=0:y0=0:x1=3840:y1=2160:speed=0.04:duration=${SECONDS}:rate=30`,
+  ffmpeg(['-f', 'lavfi', '-i', `gradients=s=3840x2160:c0=${a}:c1=${b}:x0=0:y0=0:x1=3840:y1=2160:speed=0.04:duration=${SECONDS}:rate=${FPS}`,
     '-vf', `${text},format=yuv420p`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-t', String(SECONDS), '-an', file]);
 }
 
@@ -139,11 +138,12 @@ function touchUp(clip, src, info) {
 /**
  * One finished clip. AI video tools often tag their files with the old standard-definition colour matrix (BT.601),
  * while a browser assumes the HD one (BT.709): the colours are converted and tagged, so every graphics chip shows what
- * the owner saw in the video tool. Slowed to 80% by motion interpolation (no repeated frames: they would judder).
+ * the owner saw in the video tool. Only the source's own frames are used: a source at another rate is not converted
+ * (dropped or repeated frames judder, interpolated ones wobble), it is refused below.
  */
 function makeClip(src, dest) {
   const vf = 'scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos:in_color_matrix=auto:out_color_matrix=bt709:out_range=tv,'
-    + `crop=1920:1080,setpts=PTS/${SPEED},minterpolate=fps=${FPS}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1,format=yuv420p`;
+    + 'crop=1920:1080,format=yuv420p';
   ffmpeg(['-i', src, '-vf', vf, '-frames:v', String(CLIP_FRAMES),
     // a key picture every 2 s (and at the very start), none added by scene detection: even work for the decoder
     '-c:v', 'libx264', '-profile:v', 'high', '-preset', 'slow', '-tune', 'film', '-crf', '20', '-maxrate', '8M', '-bufsize', '16M',
@@ -174,9 +174,12 @@ for (const clip of CLIPS) {
     src = path.join(RAW, found);
   }
   const info = probe(src);
-  const need = (CLIP_FRAMES / FPS) * SPEED;
-  if (info.duration < need - 0.05) {
-    console.error(`${path.basename(src)} is only ${info.duration.toFixed(1)} s long: it must be at least ${need.toFixed(1)} s.`);
+  if (info.frames < CLIP_FRAMES) {
+    console.error(`${path.basename(src)} has only ${info.frames} frames (${info.duration.toFixed(1)} s): it needs ${CLIP_FRAMES} (${CLIP_FRAMES / FPS} s at ${FPS} fps).`);
+    process.exit(1);
+  }
+  if (Math.abs(info.fps - FPS) > 0.01) {
+    console.error(`${path.basename(src)} is ${info.fps} fps: make it again at ${FPS} fps (converting the rate makes the movement judder or wobble).`);
     process.exit(1);
   }
   console.log(`Encoding ${clip.n} ${clip.name} (${info.width}x${info.height}, ${info.fps} fps, ${info.duration.toFixed(1)} s)${!placeholder && !noFixes && clip.fix ? ', with its touch-up' : ''}…`);

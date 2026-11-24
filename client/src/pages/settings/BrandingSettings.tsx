@@ -1,12 +1,27 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Palette, ImagePlus, Trash2, Check, QrCode, Landmark, PenLine, Eye } from 'lucide-react';
+import { Palette, ImagePlus, Trash2, Check, QrCode, Landmark, PenLine, Eye, Stamp } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { A4Invoice } from '../../components/billing/A4Invoice.js';
-import { BRAND_COLORS, Branding, preparePicture } from '../../lib/branding.js';
+import { DigitalStamp, STAMP_PX, stampDate } from '../../components/billing/DigitalStamp.js';
+import { BRAND_COLORS, Branding, STAMP_INKS, STAMP_WORDS, preparePicture } from '../../lib/branding.js';
 
 /** An A4 page's width on screen (210 mm at 96 dpi) */
 const SHEET_WIDTH = 794;
+
+/** A few choices side by side, like one segmented button */
+const Choice = <T extends string>({ value, options, disabled, onChange }: {
+  value: T; options: Array<[T, string]>; disabled: boolean; onChange: (v: T) => void;
+}) => (
+  <div className="inline-flex rounded-xl border border-slate-200 dark:border-slate-700 p-0.5 bg-slate-50 dark:bg-slate-800">
+    {options.map(([v, label]) => (
+      <button key={v} type="button" disabled={disabled} onClick={() => onChange(v)}
+        className={`px-3 py-1.5 rounded-lg text-[11px] font-semibold transition disabled:opacity-60 ${value === v ? 'bg-white dark:bg-slate-900 text-emerald-700 dark:text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'}`}>
+        {label}
+      </button>
+    ))}
+  </div>
+);
 
 const input = 'w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-emerald-500 disabled:opacity-60';
 
@@ -137,7 +152,7 @@ export const BrandingSettings: React.FC = () => {
 
   if (!b) return error ? <div className="text-xs text-red-600">{error}</div> : null;
   const off = !canEdit;
-  const toggle = (key: 'showUpiQr' | 'showBank' | 'logoOnReceipt', label: string, hint: string) => (
+  const toggle = (key: 'showUpiQr' | 'showBank' | 'logoOnReceipt' | 'stampDate' | 'stampOnReceipt', label: string, hint: string) => (
     <label className="flex items-start gap-2.5 text-xs">
       <input type="checkbox" className="mt-0.5" disabled={off} checked={b[key]} onChange={(e) => set(key, e.target.checked)} />
       <span><span className="font-semibold text-slate-800 dark:text-slate-200">{label}</span><span className="block text-slate-500">{hint}</span></span>
@@ -193,9 +208,104 @@ export const BrandingSettings: React.FC = () => {
             <PicturePicker label="Authorised signature" box="w-28 h-14" value={b.signature} disabled={off} onError={setError} onChange={(v) => set('signature', v)}
               hint="Sign on white paper and take a photo. The white paper is removed for you."
               prepare={(f) => preparePicture(f, 600, 240, true)} />
-            <PicturePicker label="Company stamp / seal" box="w-16 h-16" value={b.stamp} disabled={off} onError={setError} onChange={(v) => set('stamp', v)}
-              hint="A photo or scan of your rubber stamp. The white paper is removed for you."
-              prepare={(f) => preparePicture(f, 400, 400, true)} />
+          </div>
+
+          <div className="space-y-3">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><Stamp className="w-3.5 h-3.5" />Digital stamp</div>
+            <div className="flex flex-wrap items-start gap-4">
+              <div className="space-y-2 min-w-0 flex-1">
+                <Choice value={b.stampMode} disabled={off} onChange={(v) => set('stampMode', v)}
+                  options={[['off', 'No stamp'], ['seal', 'Round seal'], ['image', 'My stamp picture']]} />
+                <p className="text-[11px] text-slate-500">
+                  {b.stampMode === 'seal' ? 'Drawn for you like a rubber stamp: your shop name round the top, your city round the bottom, a word in the middle.'
+                    : b.stampMode === 'image' ? 'Your own rubber stamp, scanned or photographed, pressed on the bill in stamp-pad ink.'
+                    : 'Bills are printed without a stamp.'}
+                </p>
+              </div>
+              {/* the stamp as it will look beside the signature */}
+              {b.stampMode !== 'off' && (
+                <div className="shrink-0 w-[140px] h-[140px] rounded-xl border border-slate-200 bg-white flex items-center justify-center">
+                  <DigitalStamp brand={b} businessName={business?.name || user?.businessName || ''} place={[business?.city, business?.state].filter(Boolean).join(', ')}
+                    date={stampDate(new Date().toISOString())} size={STAMP_PX.signature[b.stampSize]} strength={b.stampStrength / 100} />
+                </div>
+              )}
+            </div>
+
+            {b.stampMode === 'image' && (
+              <PicturePicker label="Your stamp picture" box="w-16 h-16" value={b.stamp} disabled={off} onError={setError}
+                onChange={(v) => set('stamp', v)}
+                hint="A photo or scan of your rubber stamp on white paper. The paper is removed and the stamp is printed in the ink you pick."
+                prepare={(f) => preparePicture(f, 400, 400, true)} />
+            )}
+
+            {b.stampMode === 'seal' && (
+              <div className="space-y-3">
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {field('stampTop', 'Round the top', business?.name || 'Your shop name')}
+                  {field('stampBottom', 'Round the bottom', [business?.city, business?.state].filter(Boolean).join(', ') || 'City, State')}
+                </div>
+                <div className="space-y-1.5">
+                  {field('stampCenter', 'In the middle', 'AUTHORISED')}
+                  <div className="flex flex-wrap gap-1.5">
+                    {STAMP_WORDS.map((w) => (
+                      <button key={w} type="button" disabled={off} onClick={() => set('stampCenter', w)}
+                        className={`px-2 py-0.5 rounded-md border text-[10px] font-bold tracking-wide disabled:opacity-60 ${b.stampCenter.toUpperCase() === w ? 'border-emerald-500 text-emerald-700 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-500'}`}>
+                        {w}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {toggle('stampDate', "Put the bill's date in the seal", 'Like a date stamp: every bill shows its own date.')}
+              </div>
+            )}
+
+            {b.stampMode !== 'off' && (
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">Ink</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {STAMP_INKS.map(({ ink, name }) => (
+                      <button key={ink} type="button" disabled={off} onClick={() => set('stampInk', ink)} title={name} aria-label={`${name} ink`}
+                        className={`w-7 h-7 rounded-full ring-offset-2 ring-offset-white dark:ring-offset-slate-900 ${b.stampInk.toLowerCase() === ink ? 'ring-2 ring-slate-900 dark:ring-white' : ''}`}
+                        style={{ background: ink }}>
+                        {b.stampInk.toLowerCase() === ink && <Check className="w-4 h-4 text-white mx-auto" />}
+                      </button>
+                    ))}
+                    <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer">
+                      <input type="color" disabled={off} value={b.stampInk.startsWith('#') ? b.stampInk : '#1e3a8a'} onChange={(e) => set('stampInk', e.target.value)} className="w-8 h-7 rounded cursor-pointer bg-transparent" />
+                      Custom
+                    </label>
+                    {b.stampMode === 'image' && (
+                      <button type="button" disabled={off} onClick={() => set('stampInk', 'original')}
+                        className={`px-2.5 py-1 rounded-lg border text-[11px] font-semibold disabled:opacity-60 ${b.stampInk === 'original' ? 'border-emerald-500 text-emerald-700 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-500'}`}>
+                        Picture's own colours
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-x-6 gap-y-3">
+                  <div className="space-y-1.5">
+                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">Where</div>
+                    <Choice value={b.stampPlace} disabled={off} onChange={(v) => set('stampPlace', v)}
+                      options={[['signature', 'By the signature'], ['watermark', 'Watermark']]} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">Size</div>
+                    <Choice value={b.stampSize} disabled={off} onChange={(v) => set('stampSize', v)}
+                      options={[['s', 'Small'], ['m', 'Medium'], ['l', 'Large']]} />
+                  </div>
+                </div>
+                <label className="block text-xs space-y-1">
+                  <span className="font-semibold text-slate-700 dark:text-slate-300">Ink strength <span className="font-normal text-slate-500">{b.stampStrength}%</span></span>
+                  <input type="range" min={20} max={100} step={5} disabled={off} value={b.stampStrength}
+                    onChange={(e) => set('stampStrength', Number(e.target.value))} className="w-full accent-emerald-600" />
+                  <span className="block text-[11px] text-slate-500">
+                    {b.stampPlace === 'watermark' ? 'A watermark is always printed faint, behind the bill, so every word stays readable.' : 'Lower looks like a lightly pressed stamp.'}
+                  </span>
+                </label>
+                {toggle('stampOnReceipt', 'Also stamp receipts (80 mm)', 'Printed in black, small, above the thank-you line.')}
+              </div>
+            )}
           </div>
 
           <div className="space-y-3">

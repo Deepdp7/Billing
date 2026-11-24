@@ -554,7 +554,7 @@ Checks
   running the shell's own Rust code: same key), encrypts with it and gives it to the smoke test. The encrypted header
   now carries a key check: files made with another key are refused (404 + one log line) instead of served as noise.
 - **The player is now the PLRMS sign-in player** (plrms-demo `LoginHero.tsx`): four clips, each 1920x1080, 24 fps,
-  played at 80 % speed (motion-interpolated, no repeated frames, like PLRMS's), exactly 8.5 s / 204 frames, key picture
+  played at 80 % speed (motion-interpolated, like PLRMS's; dropped since, see below), exactly 8.5 s / 204 frames, key picture
   every 2 s, H.264 only (PLRMS also ships AV1, which low-end PCs decode in software). Each clip plays once with a slow
   zoom (scale 1 -> 1.09 over 8.5 s); the next fades in over the last 1.2 s; only the visible clip decodes; a hidden
   window freezes clip, zoom and bar and resumes on the same frame (snapshot canvas). The bars fill by a CSS animation.
@@ -566,3 +566,21 @@ Checks
   1.2 s before the previous one ends" at all 9 switches of two rounds (1.19-1.21 s), 24 fps, zoom running, never black,
   hidden/visible, lite, reduce motion, blocked video. Headless Edge stops drawing frames at times, which delays CSS
   fades in the test only (shown by the page's animation clock and fixed in the test by drawing continuously).
+
+## Sign-in videos no longer "shake"; digital stamp; no text highlighting in the desktop app (2026-11-24)
+
+- **Shaking camera fixed.** The 80 % slow motion needed 4 of every 5 frames invented by motion interpolation
+  (ffmpeg `minterpolate`), and those made-up frames warp (cloth and hands melt between frames), which reads as a
+  shaking camera. The clips now play at their own speed with the camera's own frames only: 24 fps, 192 frames, 8.0 s
+  (each shop on screen 6.8 s). The encoder refuses a source that is not 24 fps or shorter than 192 frames instead of
+  converting it. Checked: every frame of the new clip matches its source frame (PSNR >= 44.6 dB on all 192 frames).
+  The zoom, bar and fade lengths now come from the clips through CSS variables (`--hero-ms`, `--story-ms`, `--fade-ms`),
+  also in lite mode. The 19 sign-in checks pass on the rebuilt sealed engine (holds 6.7-6.9 s).
+- **Digital stamp** (Settings > Logo & Branding > Digital stamp): no stamp, a round seal the app draws (shop name round
+  the top, city round the bottom, AUTHORISED / PAID / RECEIVED / ... in the middle, optional bill date), or the shop's
+  own stamp picture pressed in stamp-pad ink (or its own colours). Ink colour, beside the signature or as a faint
+  watermark across the A4 bill, size S/M/L, ink strength 20-100 %, and "also on receipts" (solid black, no grain:
+  thermal printers can't print grey). Drawn as SVG with a slightly worn, tilted impression that multiplies with the
+  paper, so text under it stays readable. Live preview in settings. A shop that had uploaded a stamp picture keeps it.
+- **Desktop app: no text highlighting.** In the desktop window a click, drag or double-click no longer paints text
+  blue and pictures can't be dragged out; typing fields (and anything marked `.selectable`) still select and copy.

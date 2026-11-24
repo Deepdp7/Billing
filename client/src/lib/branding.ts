@@ -16,12 +16,39 @@ export interface Branding {
   bankBranch: string;
   showBank: boolean;
   logoOnReceipt: boolean;
+  /** The stamp on bills: none, a round seal drawn by the app, or the shop's own stamp picture */
+  stampMode: 'off' | 'seal' | 'image';
+  /** Stamp-pad ink (#rrggbb), or "original" to print an uploaded picture in its own colours */
+  stampInk: string;
+  /** Round seal: round the top (empty = business name), round the bottom (empty = city, state), the middle word */
+  stampTop: string;
+  stampBottom: string;
+  stampCenter: string;
+  /** The bill's date in the middle of the seal */
+  stampDate: boolean;
+  /** Beside the signature, or large and faint across the bill */
+  stampPlace: 'signature' | 'watermark';
+  /** Ink strength 20..100 (%) */
+  stampStrength: number;
+  stampSize: 's' | 'm' | 'l';
+  stampOnReceipt: boolean;
 }
 
 export const DEFAULT_BRANDING: Branding = {
   logo: null, color: '#059669', tagline: '', website: '', signature: null, stamp: null, upiId: '', upiPayee: '', showUpiQr: true,
   bankName: '', bankAccountName: '', bankAccountNumber: '', bankIfsc: '', bankBranch: '', showBank: true, logoOnReceipt: true,
+  stampMode: 'off', stampInk: '#1e3a8a', stampTop: '', stampBottom: '', stampCenter: 'AUTHORISED', stampDate: false,
+  stampPlace: 'signature', stampStrength: 85, stampSize: 'm', stampOnReceipt: true,
 };
+
+/** Stamp-pad inks, as a shop knows them */
+export const STAMP_INKS: Array<{ ink: string; name: string }> = [
+  { ink: '#1e3a8a', name: 'Blue' }, { ink: '#b91c1c', name: 'Red' }, { ink: '#166534', name: 'Green' },
+  { ink: '#6d28d9', name: 'Violet' }, { ink: '#111827', name: 'Black' },
+];
+
+/** Words often put in the middle of a seal */
+export const STAMP_WORDS = ['AUTHORISED', 'PAID', 'RECEIVED', 'ORIGINAL', 'VERIFIED'];
 
 /** Colours a shop can pick with one click (the custom picker allows any other) */
 export const BRAND_COLORS = ['#059669', '#0d9488', '#0284c7', '#2563eb', '#4f46e5', '#7c3aed', '#c026d3', '#db2777', '#dc2626', '#ea580c', '#ca8a04', '#334155'];

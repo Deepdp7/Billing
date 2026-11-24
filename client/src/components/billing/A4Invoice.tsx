@@ -5,6 +5,7 @@ import { canEncode } from '../../lib/code128.js';
 import { BarcodeSvg } from '../ui/BarcodeSvg.js';
 import { QrSvg } from '../ui/QrSvg.js';
 import { Branding, DEFAULT_BRANDING, shade, upiLink } from '../../lib/branding.js';
+import { DigitalStamp, STAMP_PX, stampDate } from './DigitalStamp.js';
 
 const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve',
   'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
@@ -70,6 +71,9 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
   const title = business.gstin ? 'Tax Invoice' : 'Invoice';
   const address = [business.address, business.city, business.state, business.pincode].filter(Boolean).join(', ');
   const bank = brand.showBank && brand.bankAccountNumber ? brand : null;
+  const stamped = brand.stampMode !== 'off' && !cancelled;
+  const stampPlace = [business.city, business.state].filter(Boolean).join(', ');
+  const stampProps = { brand, businessName: business.name || '', place: stampPlace, date: stampDate(invoice.invoice_date) };
   const initials = String(business.name || '?').split(/\s+/).slice(0, 2).map((w: string) => w[0]).join('').toUpperCase();
 
   // GST summary per rate (what the bill's tax is made of)
@@ -93,6 +97,13 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
   return (
     <div className="print-area relative bg-white text-slate-800 w-full rounded-lg shadow-md border border-slate-200 font-sans text-[11.5px] leading-snug select-text overflow-hidden">
       <div className="h-1.5" style={{ background: accent }} />
+
+      {/* The stamp as a watermark: large and faint across the middle of the bill */}
+      {stamped && brand.stampPlace === 'watermark' && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <DigitalStamp {...stampProps} size={STAMP_PX.watermark[brand.stampSize]} strength={(brand.stampStrength / 100) * 0.22} rotate={-22} />
+        </div>
+      )}
 
       {cancelled && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -348,7 +359,11 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
             <p className="text-[9.5px] text-slate-400 mt-1">E. &amp; O.E. · This is a computer-generated invoice.</p>
           </div>
           <div className="relative text-center w-52 shrink-0">
-            {brand.stamp && <img src={brand.stamp} alt="" className="absolute -left-20 bottom-1 w-24 h-24 object-contain opacity-90 pointer-events-none" />}
+            {/* The stamp pressed beside the signature, partly over it (as a real one would be) */}
+            {stamped && brand.stampPlace === 'signature' && (
+              <DigitalStamp {...stampProps} size={STAMP_PX.signature[brand.stampSize]} strength={brand.stampStrength / 100}
+                className="absolute" style={{ right: '62%', bottom: -STAMP_PX.signature[brand.stampSize] * 0.18 }} />
+            )}
             <div className="font-bold text-slate-800">For {business.name}</div>
             {brand.signature
               ? <img src={brand.signature} alt="" className="mx-auto h-12 max-w-[180px] object-contain" />

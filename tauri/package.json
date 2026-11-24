@@ -1,7 +1,7 @@
 {
   "name": "apna-billing-tauri",
   "productName": "Apna Billing",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Apna Billing desktop shell (Tauri). Starts the sealed local engine and shows the UI in WebView2.",
   "scripts": {

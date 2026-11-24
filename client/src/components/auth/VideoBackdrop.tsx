@@ -240,7 +240,11 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
 
   const paused = hidden || frozen;
   return (
-    <div className="login-base pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
+    <div
+      className="login-base pointer-events-none absolute inset-0 -z-10 overflow-hidden"
+      style={{ '--hero-ms': `${clipMs}ms`, '--fade-ms': `${fadeMs}ms` } as React.CSSProperties}
+      aria-hidden="true"
+    >
       {clips.map((clip, i) =>
         still || broken.has(i) ? (
           <img
@@ -250,15 +254,12 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
             decoding="async"
             draggable={false}
             className={`hero-fade absolute inset-0 h-full w-full object-cover ${i === index ? 'opacity-100' : 'opacity-0'}`}
-            style={{ transition: `opacity ${fadeMs}ms ease` }}
           />
         ) : (
           <div
             key={clip.id}
             className={`hero-fade absolute inset-0 ${i === index ? 'hero-zoom opacity-100' : i === prev ? 'hero-zoom opacity-0' : 'opacity-0'}`}
             style={{
-              transition: `opacity ${fadeMs}ms ease`,
-              animationDuration: `${clipMs}ms`,
               ...(i === index ? { willChange: 'transform' } : {}),
               ...(paused ? { animationPlayState: 'paused' } : {}),
             }}

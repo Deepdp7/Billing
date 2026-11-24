@@ -7,6 +7,7 @@ import { canEncode } from '../../lib/code128.js';
 import { BarcodeSvg } from '../ui/BarcodeSvg.js';
 import { QrSvg } from '../ui/QrSvg.js';
 import { Branding, DEFAULT_BRANDING, upiLink } from '../../lib/branding.js';
+import { DigitalStamp, STAMP_PX, stampDate } from './DigitalStamp.js';
 import { PrintPortal } from '../system/PrintPortal.js';
 import { Printer, Download, X, CheckCircle } from 'lucide-react';
 
@@ -161,6 +162,13 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({ invoice, onClose }) 
         {inv.status === 'CANCELLED' && <div className="py-2 text-center font-black text-red-600 border-b border-dashed border-gray-400">CANCELLED</div>}
 
         <div className="pt-3 text-center text-[10px] text-gray-600 space-y-0.5">
+          {/* The stamp on a receipt: in black (receipt printers print black only), above the thank-you line */}
+          {brand.stampMode !== 'off' && brand.stampOnReceipt && inv.status !== 'CANCELLED' && (
+            <div className="flex justify-center pb-1">
+              <DigitalStamp brand={brand} businessName={business.name || ''} place={[business.city, business.state].filter(Boolean).join(', ')}
+                date={stampDate(invoice.invoice_date)} size={STAMP_PX.receipt[brand.stampSize]} strength={Math.max(0.7, brand.stampStrength / 100)} rotate={-8} mono />
+            </div>
+          )}
           <p className="font-semibold">{inv.footer || 'Thank you for your business!'}</p>
           {inv.terms && <p>{inv.terms}</p>}
           {canEncode(invoice.invoice_number) && <BarcodeSvg value={invoice.invoice_number} className="mx-auto mt-1.5 h-8 w-48" />}
