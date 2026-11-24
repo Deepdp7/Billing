@@ -576,6 +576,12 @@ Checks
   converting it. Checked: every frame of the new clip matches its source frame (PSNR >= 44.6 dB on all 192 frames).
   The zoom, bar and fade lengths now come from the clips through CSS variables (`--hero-ms`, `--story-ms`, `--fade-ms`),
   also in lite mode. The 19 sign-in checks pass on the rebuilt sealed engine (holds 6.7-6.9 s).
+- **Still shaking after that: the slow zoom removed.** Measured on the four clips (phase correlation of the whole
+  picture, every frame): the camera movement is smooth (the picture's movement changes by under 1 px from one frame
+  to the next), so the files don't shake. The shake came from the PLRMS-style zoom (scale 1 -> 1.09) the player put on
+  top: it re-scales the picture by a fraction of a pixel on every screen refresh while the video changes 24 times a
+  second, and the two beat against each other. The picture is now never scaled or moved; only the cross-fade and the
+  progress bars animate. A check in the sign-in test proves no video or parent has a transform or animation (19/19).
 - **Digital stamp** (Settings > Logo & Branding > Digital stamp): no stamp, a round seal the app draws (shop name round
   the top, city round the bottom, AUTHORISED / PAID / RECEIVED / ... in the middle, optional bill date), or the shop's
   own stamp picture pressed in stamp-pad ink (or its own colours). Ink colour, beside the signature or as a faint

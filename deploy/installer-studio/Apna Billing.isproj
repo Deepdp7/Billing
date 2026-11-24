@@ -1,6 +1,6 @@
 {
   "appName": "Apna Billing",
-  "version": "1.0.2",
+  "version": "1.0.0",
   "publisher": "Apna Billing",
   "website": "",
   "description": "Billing, stock and accounts for your business",
@@ -24,7 +24,7 @@
   "replacesUninstallKey": "Apna Billing",
   "compression": "smallest",
   "outputDir": "C:\\Users\\ARITRA\\Desktop\\Billing\\releases",
-  "outputName": "ApnaBilling-1.0.2-setup",
+  "outputName": "ApnaBilling-1.0.0-setup",
   "protectFiles": true,
   "uninstallArgs": "--uninstall"
 }

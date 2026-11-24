@@ -238,11 +238,10 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
     });
   }, []);
 
-  const paused = hidden || frozen;
   return (
     <div
       className="login-base pointer-events-none absolute inset-0 -z-10 overflow-hidden"
-      style={{ '--hero-ms': `${clipMs}ms`, '--fade-ms': `${fadeMs}ms` } as React.CSSProperties}
+      style={{ '--fade-ms': `${fadeMs}ms` } as React.CSSProperties}
       aria-hidden="true"
     >
       {clips.map((clip, i) =>
@@ -258,11 +257,10 @@ export const VideoBackdrop: React.FC<{ clips: LoginClip[]; story: StoryStore }> 
         ) : (
           <div
             key={clip.id}
-            className={`hero-fade absolute inset-0 ${i === index ? 'hero-zoom opacity-100' : i === prev ? 'hero-zoom opacity-0' : 'opacity-0'}`}
-            style={{
-              ...(i === index ? { willChange: 'transform' } : {}),
-              ...(paused ? { animationPlayState: 'paused' } : {}),
-            }}
+            // The picture is never scaled or moved: a zoom changes it by a fraction of a pixel on every screen refresh
+            // while the video changes 24 times a second, and that beat makes the whole picture swim like a shaking camera
+            className={`hero-fade absolute inset-0 ${i === index ? 'opacity-100' : 'opacity-0'}`}
+            style={i === index ? { willChange: 'opacity' } : undefined}
           >
             <video
               ref={(el) => { videos.current[i] = el; }}
