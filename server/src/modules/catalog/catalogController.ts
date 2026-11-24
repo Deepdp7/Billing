@@ -2,6 +2,7 @@ import { Response } from 'express';
 import crypto from 'crypto';
 import { z } from 'zod';
 import { db } from '../../db/connection.js';
+import { cappedCount, pageOf } from '../../lib/paging.js';
 import { AuthenticatedRequest } from '../../middleware/auth.js';
 import { parse, HttpError, asyncHandler } from '../../lib/http.js';
 import { logAudit } from '../../services/auditService.js';
@@ -58,7 +59,12 @@ export function getProducts(req: AuthenticatedRequest, res: Response): void {
   const params: any[] = [req.businessId];
   if (barcode) { conditions.push('p.barcode = ?'); params.push(barcode); }
   // A scanned code: the product's barcode, or its SKU (stickers print the SKU when there is no barcode)
-  if (code) { conditions.push('(p.barcode = ? OR p.sku = ? COLLATE NOCASE)'); params.push(code, code); }
+  if (code) {
+    // The barcode first, then the SKU: each through its own index (asked together, SQLite read every product)
+    const byBarcode = db.prepare('SELECT 1 FROM products WHERE business_id = ? AND is_active = 1 AND barcode = ? LIMIT 1').get(req.businessId, code);
+    if (byBarcode) { conditions.push('p.barcode = ?'); params.push(code); }
+    else { conditions.push('p.sku = ? COLLATE NOCASE'); params.push(code); }
+  }
   if (categoryId) { conditions.push('p.category_id = ?'); params.push(categoryId); }
   if (search) {
     conditions.push('(p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ? OR p.hsn_code LIKE ?)');
@@ -66,11 +72,16 @@ export function getProducts(req: AuthenticatedRequest, res: Response): void {
   }
   if (lowStockOnly === 'true') conditions.push('p.track_stock = 1 AND p.stock_quantity <= p.low_stock_threshold');
   const where = conditions.join(' AND ');
-  const total = (db.prepare(`SELECT COUNT(*) AS c FROM products p WHERE ${where}`).get(...params) as any).c;
+  // A search or a scanned code is not counted (see lib/paging.ts); a plain list up to COUNT_CAP
+  const counted = search || code || barcode ? undefined : cappedCount(db, `FROM products p WHERE ${where}`, params);
+  // A scanned or typed code finds one or two products through the barcode / code indexes; walking the A-Z index for it
+  // (what SQLite does when asked for name order) reads every product. "+" keeps the name index out of it.
+  const order = code || barcode ? '+p.name COLLATE NOCASE' : 'p.name COLLATE NOCASE';
   const products = db.prepare(`
     SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category_id = c.id
-    WHERE ${where} ORDER BY p.name COLLATE NOCASE ASC LIMIT ? OFFSET ?`).all(...params, limit, (page - 1) * limit);
-  res.json({ data: products.map(withExtras), pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } });
+    WHERE ${where} ORDER BY ${order} ASC LIMIT ? OFFSET ?`).all(...params, limit + 1, (page - 1) * limit);
+  const out = pageOf(products, page, limit, counted);
+  res.json({ data: out.data.map(withExtras), pagination: out.pagination });
 }
 
 export function createProduct(req: AuthenticatedRequest, res: Response): void {

@@ -12,17 +12,23 @@ function range(req: AuthenticatedRequest) {
   return { from: fromDate || '0000-01-01', to: toDate || '9999-12-31' };
 }
 
+/** Sales per HSN code and GST rate in a period, from the day's sales per product (db/salesSummary.ts) */
+const HSN_SQL = `SELECT NULLIF(hsn_code, '') AS hsn_code, tax_rate, SUM(quantity) AS total_quantity, SUM(taxable_paise) AS taxable_value_paise,
+    SUM(cgst_paise) AS cgst_paise, SUM(sgst_paise) AS sgst_paise, SUM(igst_paise) AS igst_paise,
+    SUM(tax_paise) AS tax_amount_paise, SUM(total_paise) AS total_value_paise
+  FROM sales_rollup WHERE business_id = ? AND day BETWEEN ? AND ?
+  GROUP BY hsn_code, tax_rate HAVING SUM(lines) > 0`;
+
 function profitAndLoss(businessId: string, from: string, to: string) {
   const sales = db.prepare(`
     SELECT COALESCE(SUM(subtotal_paise - discount_paise), 0) AS net_sales_paise, COALESCE(SUM(tax_paise), 0) AS tax_collected_paise,
            COALESCE(SUM(total_paise), 0) AS gross_sales_paise, COALESCE(SUM(round_off_paise), 0) AS round_off_paise,
            COALESCE(SUM(discount_paise), 0) AS discount_paise, COUNT(id) AS invoice_count
     FROM invoices WHERE business_id = ? AND status = 'ISSUED' AND invoice_date BETWEEN ? AND ?`).get(businessId, from, to) as any;
-  // Cost captured on each invoice line at the time of sale.
+  // Cost captured on each invoice line at the time of sale, added up per day (db/salesSummary.ts)
   const cogs = db.prepare(`
-    SELECT COALESCE(SUM(ii.quantity * ii.cost_price_paise), 0) AS cogs_paise
-    FROM invoice_items ii JOIN invoices i ON i.id = ii.invoice_id
-    WHERE i.business_id = ? AND i.status = 'ISSUED' AND i.invoice_date BETWEEN ? AND ?`).get(businessId, from, to) as any;
+    SELECT COALESCE(SUM(cost_paise), 0) AS cogs_paise FROM sales_rollup
+    WHERE business_id = ? AND day BETWEEN ? AND ?`).get(businessId, from, to) as any;
   const returns = db.prepare(`
     SELECT COALESCE(SUM(subtotal_paise), 0) AS returns_paise, COALESCE(SUM(tax_paise), 0) AS returns_tax_paise
     FROM credit_notes WHERE business_id = ? AND return_date BETWEEN ? AND ?`).get(businessId, from, to) as any;
@@ -69,19 +75,20 @@ export function getGstSummary(req: AuthenticatedRequest, res: Response): void {
            COALESCE(SUM(total_paise), 0) AS total_paise, COUNT(id) AS total_invoices,
            SUM(CASE WHEN customer_gstin IS NOT NULL AND customer_gstin != '' THEN 1 ELSE 0 END) AS b2b_invoices
     FROM invoices WHERE business_id = ? AND status = 'ISSUED' AND invoice_date BETWEEN ? AND ?`).get(biz, from, to);
-  const hsnSummary = db.prepare(`
-    SELECT ii.hsn_code, ii.tax_rate, SUM(ii.quantity) AS total_quantity, SUM(ii.taxable_paise) AS taxable_value_paise,
-           SUM(ii.cgst_paise) AS cgst_paise, SUM(ii.sgst_paise) AS sgst_paise, SUM(ii.igst_paise) AS igst_paise,
-           SUM(ii.tax_paise) AS tax_amount_paise, SUM(ii.total_paise) AS total_value_paise
-    FROM invoice_items ii JOIN invoices i ON ii.invoice_id = i.id
-    WHERE i.business_id = ? AND i.status = 'ISSUED' AND i.invoice_date BETWEEN ? AND ?
-    GROUP BY ii.hsn_code, ii.tax_rate ORDER BY taxable_value_paise DESC`).all(biz, from, to);
-  const rateSummary = db.prepare(`
-    SELECT ii.tax_rate, SUM(ii.taxable_paise) AS taxable_value_paise, SUM(ii.cgst_paise) AS cgst_paise, SUM(ii.sgst_paise) AS sgst_paise,
-           SUM(ii.igst_paise) AS igst_paise, SUM(ii.tax_paise) AS tax_amount_paise
-    FROM invoice_items ii JOIN invoices i ON ii.invoice_id = i.id
-    WHERE i.business_id = ? AND i.status = 'ISSUED' AND i.invoice_date BETWEEN ? AND ?
-    GROUP BY ii.tax_rate ORDER BY ii.tax_rate`).all(biz, from, to);
+  const hsnSummary = db.prepare(`${HSN_SQL} ORDER BY taxable_value_paise DESC`).all(biz, from, to) as any[];
+  // Per rate: the per-HSN rows added up (one pass over the period's bill lines instead of two: a big shop's year of
+  // bills is millions of lines)
+  const byRate = new Map<number, any>();
+  for (const h of hsnSummary) {
+    const r = byRate.get(h.tax_rate) || { tax_rate: h.tax_rate, taxable_value_paise: 0, cgst_paise: 0, sgst_paise: 0, igst_paise: 0, tax_amount_paise: 0 };
+    r.taxable_value_paise += h.taxable_value_paise || 0;
+    r.cgst_paise += h.cgst_paise || 0;
+    r.sgst_paise += h.sgst_paise || 0;
+    r.igst_paise += h.igst_paise || 0;
+    r.tax_amount_paise += h.tax_amount_paise || 0;
+    byRate.set(h.tax_rate, r);
+  }
+  const rateSummary = [...byRate.values()].sort((a, b) => a.tax_rate - b.tax_rate);
   const inputTax = db.prepare(`SELECT COALESCE(SUM(tax_paise), 0) AS input_tax_paise, COALESCE(SUM(subtotal_paise), 0) AS purchase_taxable_paise
                                FROM purchase_invoices WHERE business_id = ? AND invoice_date BETWEEN ? AND ?`).get(biz, from, to);
   const creditNotes = db.prepare(`SELECT COALESCE(SUM(tax_paise), 0) AS tax_paise, COALESCE(SUM(subtotal_paise), 0) AS taxable_paise, COUNT(*) AS count
@@ -231,22 +238,17 @@ const REPORTS: Record<string, (biz: string, from: string, to: string, q: Record<
     title: 'Product-wise sales',
     columns: [{ key: 'product_name', label: 'Product' }, { key: 'quantity', label: 'Qty Sold' }, { key: 'revenue_paise', label: 'Revenue ex-GST (₹)', money: true },
       { key: 'cost_paise', label: 'Cost (₹)', money: true }, { key: 'profit_paise', label: 'Gross Profit (₹)', money: true }],
-    rows: db.prepare(`SELECT ii.product_name, SUM(ii.quantity) AS quantity, SUM(ii.taxable_paise) AS revenue_paise,
-                        ROUND(SUM(ii.quantity * ii.cost_price_paise)) AS cost_paise, SUM(ii.taxable_paise) - ROUND(SUM(ii.quantity * ii.cost_price_paise)) AS profit_paise
-                      FROM invoice_items ii JOIN invoices i ON i.id = ii.invoice_id
-                      WHERE i.business_id = ? AND i.status = 'ISSUED' AND i.invoice_date BETWEEN ? AND ?
-                      GROUP BY ii.product_name ORDER BY revenue_paise DESC`).all(biz, from, to),
+    rows: db.prepare(`SELECT MAX(product_name) AS product_name, SUM(quantity) AS quantity, SUM(taxable_paise) AS revenue_paise,
+                        ROUND(SUM(cost_paise)) AS cost_paise, SUM(taxable_paise) - ROUND(SUM(cost_paise)) AS profit_paise
+                      FROM sales_rollup WHERE business_id = ? AND day BETWEEN ? AND ?
+                      GROUP BY product_key HAVING SUM(lines) > 0 ORDER BY revenue_paise DESC`).all(biz, from, to),
   }),
   'gst-hsn': (biz, from, to) => ({
     title: 'GST HSN summary',
     columns: [{ key: 'hsn_code', label: 'HSN/SAC' }, { key: 'tax_rate', label: 'GST %' }, { key: 'total_quantity', label: 'Qty' },
       { key: 'taxable_value_paise', label: 'Taxable (₹)', money: true }, { key: 'cgst_paise', label: 'CGST (₹)', money: true },
       { key: 'sgst_paise', label: 'SGST (₹)', money: true }, { key: 'igst_paise', label: 'IGST (₹)', money: true }, { key: 'total_value_paise', label: 'Total (₹)', money: true }],
-    rows: db.prepare(`SELECT ii.hsn_code, ii.tax_rate, SUM(ii.quantity) AS total_quantity, SUM(ii.taxable_paise) AS taxable_value_paise,
-                        SUM(ii.cgst_paise) AS cgst_paise, SUM(ii.sgst_paise) AS sgst_paise, SUM(ii.igst_paise) AS igst_paise, SUM(ii.total_paise) AS total_value_paise
-                      FROM invoice_items ii JOIN invoices i ON ii.invoice_id = i.id
-                      WHERE i.business_id = ? AND i.status = 'ISSUED' AND i.invoice_date BETWEEN ? AND ?
-                      GROUP BY ii.hsn_code, ii.tax_rate ORDER BY taxable_value_paise DESC`).all(biz, from, to),
+    rows: db.prepare(`${HSN_SQL} ORDER BY taxable_value_paise DESC`).all(biz, from, to),
   }),
   'profit-loss': (biz, from, to) => {
     const pl = profitAndLoss(biz, from, to);
@@ -273,8 +275,17 @@ function runReport(req: AuthenticatedRequest): ReportResult & { type: string; fr
   return { type, from, to, ...fn(req.businessId!, from, to, req.query as Record<string, string>) };
 }
 
+/** Rows shown on screen; a bigger report (a mall's month of bills: 80,000 rows, 75 MB) is downloaded with Export */
+const VIEW_ROWS = 1000;
+
 export function getReport(req: AuthenticatedRequest, res: Response): void {
-  res.json(runReport(req));
+  const r = runReport(req);
+  if (r.rows.length <= VIEW_ROWS) {
+    res.json(r);
+    return;
+  }
+  // The totals (summary) are of the whole report; only the list is cut
+  res.json({ ...r, rows: r.rows.slice(0, VIEW_ROWS), totalRows: r.rows.length });
 }
 
 export function exportReport(req: AuthenticatedRequest, res: Response): void {

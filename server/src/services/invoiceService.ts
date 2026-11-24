@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { z } from 'zod';
 import { db } from '../db/connection.js';
+import { cappedCount, pageOf } from '../lib/paging.js';
 import { HttpError, parse } from '../lib/http.js';
 import { DATE_RE, localDate, addDays } from '../lib/dates.js';
 import { calculateInvoice, CalculationError } from './invoiceCalculator.js';
@@ -619,11 +620,18 @@ export function listInvoices(businessId: string, q: Record<string, any>) {
   if (q.fromDate) { conditions.push('invoice_date >= ?'); params.push(q.fromDate); }
   if (q.toDate) { conditions.push('invoice_date <= ?'); params.push(q.toDate); }
   const where = conditions.join(' AND ');
-  const total = (db.prepare(`SELECT COUNT(*) AS c FROM invoices WHERE ${where}`).get(...params) as any).c;
-  const data = db.prepare(`SELECT id, business_id, invoice_number, customer_id, customer_name, customer_phone, customer_gstin, invoice_date, due_date,
-                                  subtotal_paise, discount_paise, tax_paise, cgst_paise, sgst_paise, igst_paise, round_off_paise, total_paise,
-                                  payment_mode, payment_status, amount_paid_paise, status, cancel_reason, created_at
-                           FROM invoices WHERE ${where} ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?`)
-    .all(...params, limit, (page - 1) * limit);
-  return { data, pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  const cols = `id, business_id, invoice_number, customer_id, customer_name, customer_phone, customer_gstin, invoice_date, due_date,
+                subtotal_paise, discount_paise, tax_paise, cgst_paise, sgst_paise, igst_paise, round_off_paise, total_paise,
+                payment_mode, payment_status, amount_paid_paise, status, cancel_reason, created_at`;
+  // A bill number typed or scanned in full (the barcode on every bill): found at once by its index
+  if (q.search && page === 1) {
+    const exact = db.prepare(`SELECT ${cols} FROM invoices WHERE business_id = ? AND invoice_number IN (?, ?)`)
+      .all(businessId, String(q.search).trim(), String(q.search).trim().toUpperCase());
+    if (exact.length) return pageOf(exact, 1, limit);
+  }
+  // Newest first: a search stops as soon as it has a page; a plain list is counted up to COUNT_CAP (lib/paging.ts)
+  const counted = q.search ? undefined : cappedCount(db, `FROM invoices WHERE ${where}`, params);
+  const data = db.prepare(`SELECT ${cols} FROM invoices WHERE ${where} ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?`)
+    .all(...params, limit + 1, (page - 1) * limit);
+  return pageOf(data, page, limit, counted);
 }

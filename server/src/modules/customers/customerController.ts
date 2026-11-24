@@ -103,9 +103,10 @@ export function deleteCustomer(req: AuthenticatedRequest, res: Response): void {
       : `You hold ${amount} of ${cust.name}'s money as advance. Return it first (₹ button), then delete.`);
   }
   const history = (db.prepare(`SELECT
-      (SELECT COUNT(*) FROM invoices WHERE customer_id = ?) +
-      (SELECT COUNT(*) FROM payments WHERE customer_id = ?) +
-      (SELECT COUNT(*) FROM credit_notes WHERE customer_id = ?) AS c`).get(cust.id, cust.id, cust.id) as any).c;
+      (SELECT COUNT(*) FROM invoices WHERE business_id = ? AND customer_id = ?) +
+      (SELECT COUNT(*) FROM payments WHERE business_id = ? AND customer_id = ?) +
+      (SELECT COUNT(*) FROM credit_notes WHERE business_id = ? AND customer_id = ?) AS c`)
+    .get(cust.business_id, cust.id, cust.business_id, cust.id, cust.business_id, cust.id) as any).c;
 
   if (history > 0) {
     if (req.query.mode !== 'deactivate') {

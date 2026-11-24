@@ -4,6 +4,8 @@ import crypto from 'crypto';
 import { db } from '../db/connection.js';
 import { config } from '../config/index.js';
 import { getSchemaVersion, LATEST_SCHEMA_VERSION, backfillAfterRestore } from '../db/migrations.js';
+import { sha256File } from '../lib/fileHash.js';
+import { rebuildSalesSummary } from '../db/salesSummary.js';
 import { HttpError } from '../lib/http.js';
 import { currentShop } from '../db/shops.js';
 import { attachKeyForFile, databaseKey, encryptFileInPlace, isPlainSqliteFile, openBackupFile, SqliteDatabase } from '../db/sqlite.js';
@@ -16,6 +18,8 @@ const RESTORE_EXCLUDED_TABLES = new Set([
   'schema_migrations', 'license_state', 'account_sync', 'backup_history', 'feature_usage', 'system_settings', 'sqlite_sequence',
   // This computer's place in the account's shared data
   'sync_ctl', 'sync_outbox', 'sync_deltas', 'sync_state',
+  // Built again from the restored bills (db/salesSummary.ts)
+  'sales_rollup',
 ]);
 
 export function getSystemSetting(key: string, fallback: string): string {
@@ -64,9 +68,6 @@ export function updateBackupSettings(input: {
   return getBackupSettings();
 }
 
-function sha256File(filePath: string): string {
-  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
-}
 
 /** Open a backup file read-only and check that it is an intact Apna Billing database. */
 export function inspectBackupFile(filePath: string): { ok: boolean; integrity: string; schemaVersion: number; businesses: number; invoices: number } {
@@ -214,6 +215,8 @@ export async function restoreFromFile(filePath: string, userId?: string | null) 
           if (cols) db.prepare(`INSERT INTO main."${t}" (${cols}) SELECT ${cols} FROM restore_src."${t}"`).run();
         }
         backfillAfterRestore(db);
+        // The sales summary is not copied: it is built from the restored bills (db/salesSummary.ts)
+        rebuildSalesSummary(db);
         const fkProblems = db.prepare('PRAGMA main.foreign_key_check').all();
         if (fkProblems.length > 0) {
           throw new HttpError(400, 'BACKUP_FK_VIOLATION', `Backup contains ${fkProblems.length} broken references; restore aborted.`);

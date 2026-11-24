@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3-multiple-ciphers';
 import fs from 'fs';
 import path from 'path';
 import { SCHEMA_SQL } from './schema.js';
+import { SALES_SUMMARY_SQL, rebuildSalesSummary } from './salesSummary.js';
 
 export interface Migration {
   version: number;
@@ -376,6 +377,41 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 6,
+    name: 'large_shop_indexes',
+    up: (db) => {
+      // A shop with years of bills (a mall store makes a million a year): the newest-first lists (bills, payments,
+      // stock history) read the newest rows instead of sorting every row, and a product's or a customer's history is
+      // found directly. A customer's bills and payments have indexes of their own that leave out walk-in sales (most
+      // of a mall's bills have no customer: an index over all of them looks useless to SQLite and it reads every
+      // bill instead). Indexes only: no data changes.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_invoices_created ON invoices(business_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(business_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_invoice_items_product ON invoice_items(business_id, product_id);
+        CREATE INDEX IF NOT EXISTS idx_invoices_customer_date ON invoices(business_id, customer_id, invoice_date) WHERE customer_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_payments_customer_recent ON payments(business_id, customer_id, payment_date, created_at) WHERE customer_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_payments_date_created ON payments(business_id, payment_date, created_at);
+        -- Products in name order (A-Z ignoring case, as the lists show them), a code typed at the counter, low stock
+        CREATE INDEX IF NOT EXISTS idx_products_name_nocase ON products(business_id, name COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_products_sku_nocase ON products(business_id, sku COLLATE NOCASE);
+        -- The dashboard's 30-day sales trend, read from the index alone
+        CREATE INDEX IF NOT EXISTS idx_invoices_day_total ON invoices(business_id, status, invoice_date, total_paise);
+        CREATE INDEX IF NOT EXISTS idx_products_low_stock ON products(business_id, stock_quantity)
+          WHERE is_active = 1 AND track_stock = 1 AND stock_quantity <= low_stock_threshold;
+      `);
+    },
+  },
+  {
+    version: 7,
+    name: 'sales_summary',
+    up: (db) => {
+      // The day's sales per product, kept by triggers (db/salesSummary.ts), built here from the bills already made
+      db.exec(SALES_SUMMARY_SQL);
+      rebuildSalesSummary(db);
+    },
+  },
 ];
 
 /**
@@ -435,6 +471,9 @@ export function runMigrations(
 
   let backupPath: string | undefined;
   if (opts.backupDir && hasUserData(db)) {
+    // An existing shop's data is upgraded once (a safety copy first): for a big shop that takes longer than a normal
+    // start. The desktop shell waits for it instead of reporting a failed start (tauri/src-tauri/src/lib.rs).
+    console.log('APNA_UPGRADING');
     fs.mkdirSync(opts.backupDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     backupPath = path.join(opts.backupDir, `pre-migration-v${from}-${stamp}.db`);

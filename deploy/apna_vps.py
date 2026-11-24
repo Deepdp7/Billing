@@ -16,6 +16,12 @@
                                                     build + upload + publish an update (pushed to every open app)
     python deploy/apna_vps.py reset-updates         forget every published version on the VPS (to restart the
                                                     numbering lower, e.g. at 1.0.0); licences are not touched
+    python deploy/apna_vps.py restore [--host IP] [--file X.wwbak]
+                                                    the server was lost: rebuild it on a (new) VPS from the newest
+                                                    off-server backup (Admin app > Backups & Recovery), same keys, and
+                                                    tell every installed app the new address
+    python deploy/apna_vps.py publish-address [URL] sign "the server is at URL" and publish it (deploy/servers.json,
+                                                    pushed to GitHub); apps that cannot reach their server follow it
 
 Settings: deploy/vps.json. Passwords are asked for (or read from VPS_PASSWORD / APNA_ADMIN_PASSWORD) and never saved.
 Needs: Python 3 with paramiko (pip install paramiko), Node.js, Rust (for the installer).
@@ -39,6 +45,7 @@ import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # recovery.py beside this file
 CFG = json.load(open(os.path.join(ROOT, 'deploy', 'vps.json'), encoding='utf-8'))
 BASE = CFG['remoteDir']
 CA_FILE = os.path.join(ROOT, CFG['caFile'])
@@ -183,13 +190,18 @@ def package_server():
     return buf.getvalue()
 
 
+SIGNING_KEY = os.path.join(ROOT, 'license-server', 'keys', 'signing-private.pem')
+
+
 def cmd_deploy(args):
     bundle = package_server()
-    key = open(os.path.join(ROOT, 'license-server', 'keys', 'signing-private.pem'), 'rb').read()
+    # Restoring from another computer there may be no copy of the signing key here: the VPS then keeps its own
+    key = open(SIGNING_KEY, 'rb').read() if os.path.exists(SIGNING_KEY) else None
     vps = Vps()
     say('Uploading')
     vps.put_bytes(bundle, '/tmp/apna-billing-server.tgz')
-    vps.put_bytes(key, f'{BASE}/keys/incoming.pem')
+    if key:
+        vps.put_bytes(key, f'{BASE}/keys/incoming.pem')
     # Public half of the update-signing key: the Admin Panel checks uploaded installers against it.
     updater_pub = json.load(open(os.path.join(ROOT, 'tauri', 'src-tauri', 'tauri.conf.json'), encoding='utf-8'))['plugins']['updater']['pubkey']
     vps.put_bytes(updater_pub.encode(), f'{BASE}/keys/updater.pub')
@@ -201,7 +213,8 @@ def cmd_deploy(args):
     vps.run(f"""set -e
 cd {BASE}
 # The license signing key is set once. A different key would invalidate every installed app, so refuse unless asked.
-if [ ! -f keys/signing-private.pem ]; then mv keys/incoming.pem keys/signing-private.pem; echo "   signing key installed";
+if [ ! -f keys/incoming.pem ]; then [ -f keys/signing-private.pem ] || {{ echo "No licence-signing key here or on the VPS." >&2; exit 3; }};
+elif [ ! -f keys/signing-private.pem ]; then mv keys/incoming.pem keys/signing-private.pem; echo "   signing key installed";
 elif cmp -s keys/incoming.pem keys/signing-private.pem; then rm keys/incoming.pem;
 elif [ "{1 if args.replace_key else 0}" = "1" ]; then cp keys/signing-private.pem keys/signing-private.pem.$(date +%s).bak; mv keys/incoming.pem keys/signing-private.pem; echo "   signing key REPLACED";
 else rm keys/incoming.pem; rm -f /tmp/apna-billing-server.tgz; echo "The VPS already has a different license signing key. Re-run with --replace-key only if you mean it." >&2; exit 3; fi
@@ -255,6 +268,8 @@ echo "$B" > backups/last-deploy
 ls -1dt backups/deploy-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
 echo "   previous version kept in $B"
 """)
+    keep_vps_copies(vps)
+    seal_ca_key(vps)
     vps.close()
     say('Checking from this computer')
     status, data = api('GET', '/api/health')
@@ -262,6 +277,131 @@ echo "   previous version kept in $B"
     if status != 200:
         raise SystemExit('The server does not answer from outside. Check the output above.')
     say('Done. Reopen the Admin Panel (or refresh it) to see the new version.')
+
+
+def keep_vps_copies(vps):
+    """Copies of the database on the VPS itself: hourly (kept 2 days) and nightly (kept 30 days). They help after a
+    mistake; the off-server backups (Admin app) are what helps when the VPS itself is lost."""
+    vps.run(f"""cat > /etc/cron.d/apna-billing <<'EOF'
+# Copies of the licence database on this VPS: hourly (kept 2 days) and nightly (kept 30 days).
+# Off-server copies are made by the owner's Admin app (Backups & Recovery).
+17 * * * * apnabilling cd {BASE}/license-server && /usr/bin/node backup-db.cjs hourly >> {BASE}/backups/backup.log 2>&1
+30 2 * * * apnabilling cd {BASE}/license-server && /usr/bin/node backup-db.cjs >> {BASE}/backups/backup.log 2>&1
+EOF
+chmod 644 /etc/cron.d/apna-billing""", quiet=True)
+
+
+def seal_ca_key(vps):
+    """The TLS CA key can only be read by root, so the server cannot put it in its backups by itself: encrypted here to
+    the owner's backup key, it is left for the server to carry along (it can never read it)."""
+    import recovery
+    pub = vps.run(f'cat {BASE}/data/backup-public.pem 2>/dev/null || true', quiet=True)
+    if 'BEGIN PUBLIC KEY' not in pub:
+        print('   (backups are not set up yet: Admin app > Backups & Recovery; then Upload once more)')
+        return
+    ca = vps.run(f'cat {BASE}/tls/ca.key', quiet=True)
+    vps.put_bytes(recovery.seal(pub, ca.encode()), f'{BASE}/data/recovery-ca.key.wwenc')
+    vps.run(f'chown apnabilling:apnabilling {BASE}/data/recovery-ca.key.wwenc && chmod 640 {BASE}/data/recovery-ca.key.wwenc', quiet=True)
+    print('   backups include the server certificate key (encrypted to your backup key)')
+
+
+def cmd_restore(args):
+    """The server was lost: everything back on a (new) VPS from the newest off-server backup"""
+    import recovery
+    path = args.file or recovery.newest_backup()
+    say(f'Opening {os.path.basename(path)}')
+    password = os.environ.get('RECOVERY_PASSWORD') or getpass.getpass('Recovery password: ')
+    files, manifest, key_info = recovery.open_backup(path, password)
+    print(f'   made {manifest["createdAt"]}: ' + ', '.join(sorted(files)))
+    old_url = manifest.get('server') or CFG['publicUrl']
+    old_host = re.sub(r'^https://|:\d+$', '', old_url)
+    host = args.host or input(f'New server address (IP) [{old_host}]: ').strip() or old_host
+    port = CFG['port']
+    url = f'https://{host}:{port}'
+    if 'tls/ca.crt' not in files:
+        raise SystemExit('This backup has no certificate authority: the installed apps would not trust a rebuilt server.')
+    same_certificate = host == old_host and 'tls/server.crt' in files and 'tls/server.key' in files
+    if not same_certificate and 'tls/ca.key' not in files:
+        raise SystemExit('A new address needs a new certificate, and this backup has no CA key (press Upload once after setting up '
+                         'backups, so later backups carry it). Restore onto the same address instead.')
+    CFG['host'], CFG['publicUrl'] = host, url
+    vps = Vps()
+    say(f'Preparing {host}')
+    # Node.js (the server) and openssl, on a fresh Ubuntu / Debian
+    vps.run('if ! node -v 2>/dev/null | grep -qE "^v(2[0-9]|[3-9][0-9])"; then '
+            'curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs; fi')
+    vps.run('command -v openssl >/dev/null || apt-get install -y openssl curl')
+    vps.run(f'mkdir -p {BASE}/tls {BASE}/keys {BASE}/data {BASE}/backups && systemctl stop apna-license 2>/dev/null || true')
+    vps.put_bytes(files['tls/ca.crt'], f'{BASE}/tls/ca.crt')
+    if same_certificate:
+        vps.put_bytes(files['tls/server.crt'], f'{BASE}/tls/server.crt')
+        vps.put_bytes(files['tls/server.key'], f'{BASE}/tls/server.key')
+    if 'tls/ca.key' in files:
+        vps.put_bytes(files['tls/ca.key'], f'{BASE}/tls/ca.key')
+    if not same_certificate:
+        say(f'A certificate for {host}, from the same certificate authority (the apps trust it as before)')
+        vps.run(f"""set -e
+cd {BASE}/tls
+openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN={host}" 2>/dev/null
+printf "subjectAltName=IP:%s\nbasicConstraints=CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n" "{host}" > server.ext
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 3650 -sha256 -extfile server.ext 2>/dev/null
+rm -f server.csr server.ext""")
+    say('Setting up the service (user, folders, settings)')
+    vps.put_bytes(open(os.path.join(ROOT, 'deploy', 'vps-setup.sh'), 'rb').read().replace(b'\r\n', b'\n'), f'{BASE}/vps-setup.sh')
+    vps.run(f'PUBLIC_IP={host} PORT={port} bash {BASE}/vps-setup.sh')
+    say('Putting the data and keys back')
+    vps.run(f'systemctl stop apna-license 2>/dev/null || true; rm -f {BASE}/data/license.db {BASE}/data/license.db-wal {BASE}/data/license.db-shm')
+    vps.put_bytes(files['data/license.db'], f'{BASE}/data/license.db')
+    vps.put_bytes(recovery.public_pem_of(key_info), f'{BASE}/data/backup-public.pem')
+    if 'keys/signing-private.pem' in files:
+        vps.put_bytes(files['keys/signing-private.pem'], f'{BASE}/keys/signing-private.pem')
+    if 'keys/updater.pub' in files:
+        vps.put_bytes(files['keys/updater.pub'], f'{BASE}/keys/updater.pub')
+    vps.run(f"""chown -R apnabilling:apnabilling {BASE}/data {BASE}/keys {BASE}/backups
+chmod 600 {BASE}/keys/signing-private.pem; chown root:root {BASE}/tls/ca.key; chmod 600 {BASE}/tls/ca.key {BASE}/tls/server.key
+chown apnabilling:apnabilling {BASE}/tls/server.key""")
+    vps.close()
+    # This computer keeps a copy of the signing key as before (deploy uploads it, and it signs the new address)
+    if not os.path.exists(SIGNING_KEY) and 'keys/signing-private.pem' in files:
+        os.makedirs(os.path.dirname(SIGNING_KEY), exist_ok=True)
+        open(SIGNING_KEY, 'wb').write(files['keys/signing-private.pem'])
+    say('Installing the server and the Admin Panel')
+    cmd_deploy(argparse.Namespace(replace_key=False))
+    # From now on this is the server (deploy, release, the Admin app on this computer)
+    cfg_path = os.path.join(ROOT, 'deploy', 'vps.json')
+    cfg = json.load(open(cfg_path, encoding='utf-8'))
+    cfg['host'], cfg['publicUrl'] = host, url
+    json.dump(cfg, open(cfg_path, 'w', encoding='utf-8'), indent=2)
+    admin_dir = os.path.join(os.environ.get('APPDATA', ''), 'in.wintegwave.admin')
+    os.makedirs(admin_dir, exist_ok=True)
+    json.dump({'url': url}, open(os.path.join(admin_dir, 'server-address.json'), 'w', encoding='utf-8'))
+    if host != old_host:
+        say('Telling every installed app where the server is now')
+        cmd_publish_address(argparse.Namespace(url=url, yes=args.yes))
+    say(f'Done. The server is back at {url} with everything as of {manifest["createdAt"]}.')
+
+
+def cmd_publish_address(args):
+    """Signs "the server is at URL" and publishes it where the installed apps look when their server does not answer"""
+    import recovery
+    url = args.url or CFG['publicUrl']
+    if not re.match(r'^https://[^\s/]+(:\d+)?$', url):
+        raise SystemExit('The address looks like https://1.2.3.4:7443')
+    embedded = re.search(r'-----BEGIN PUBLIC KEY-----[\s\S]+?-----END PUBLIC KEY-----',
+                         open(os.path.join(ROOT, 'server', 'src', 'licensing', 'publicKey.ts'), encoding='utf-8').read()).group(0)
+    doc, sig = recovery.sign_address(open(SIGNING_KEY, 'rb').read(), url, embedded)
+    with open(os.path.join(ROOT, 'deploy', 'servers.json'), 'w', encoding='utf-8', newline='') as f:
+        f.write(doc)
+    with open(os.path.join(ROOT, 'deploy', 'servers.json.sig'), 'w', encoding='utf-8', newline='') as f:
+        f.write(sig + '\n')
+    print(f'   signed: {doc}')
+    if not args.yes and input('Publish it now (git commit + push of deploy/servers.json)? [Y/n] ').strip().lower() not in ('', 'y', 'yes'):
+        print('   Not published. Commit and push deploy/servers.json and deploy/servers.json.sig when ready.')
+        return
+    sh('git add deploy/servers.json deploy/servers.json.sig')
+    sh(f'git commit -m "The server is at {url}" -- deploy/servers.json deploy/servers.json.sig')
+    sh('git push')
+    print('   published: apps that cannot reach their server look here within 10 minutes and follow it')
 
 
 def cmd_admin(_args):
@@ -580,9 +720,17 @@ def main():
     r.add_argument('version', nargs='?')
     r.add_argument('--required', action='store_true', help='users must install it (no "Later")')
     r.add_argument('--notes', default='')
+    rs = sub.add_parser('restore')
+    rs.add_argument('--host', help='the (new) server address; asked when left out')
+    rs.add_argument('--file', help='a backup file (default: the newest in Documents\\Winteg Wave Backups)')
+    rs.add_argument('--yes', action='store_true', help='publish the new address without asking')
+    pa = sub.add_parser('publish-address')
+    pa.add_argument('url', nargs='?', help='default: publicUrl in deploy/vps.json')
+    pa.add_argument('--yes', action='store_true')
     args = p.parse_args()
     {'setup': cmd_setup, 'deploy': cmd_deploy, 'admin': cmd_admin, 'admin-app': cmd_admin_app, 'build': cmd_build,
-     'release': cmd_release, 'reset-updates': cmd_reset_updates, 'sign': cmd_sign}[args.cmd](args)
+     'release': cmd_release, 'reset-updates': cmd_reset_updates, 'sign': cmd_sign, 'restore': cmd_restore,
+     'publish-address': cmd_publish_address}[args.cmd](args)
 
 
 if __name__ == '__main__':

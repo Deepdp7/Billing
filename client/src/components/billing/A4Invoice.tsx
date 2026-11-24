@@ -6,6 +6,7 @@ import { BarcodeSvg } from '../ui/BarcodeSvg.js';
 import { QrSvg } from '../ui/QrSvg.js';
 import { Branding, DEFAULT_BRANDING, shade, upiLink } from '../../lib/branding.js';
 import { DigitalStamp, STAMP_PX, stampDate } from './DigitalStamp.js';
+import { brandForPrint, docTitle, type PrintOptions } from '../../lib/printOptions.js';
 
 const ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve',
   'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
@@ -54,12 +55,21 @@ const Label: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <div className="text-[9.5px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-1">{children}</div>
 );
 
-/** The A4 tax invoice: the same sheet on screen, in the PDF and on paper, in the shop's own logo and colours. */
-export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
+/**
+ * The A4 (and A5) bill: the same sheet on screen, in the PDF and on paper, in the shop's own logo and colours. `options`
+ * (the print window) choose the kind of document and what is on it for this print; `copy` labels the copy.
+ */
+export const A4Invoice: React.FC<{ invoice: Invoice; options?: PrintOptions; copy?: string; compact?: boolean }> = ({ invoice, options, copy, compact }) => {
   const inv: any = invoice;
   const business: any = inv.business || {};
-  const brand: Branding = { ...DEFAULT_BRANDING, ...(inv.branding || {}) };
-  const logo = business.logo_url || brand.logo;
+  const saved: Branding = { ...DEFAULT_BRANDING, ...(inv.branding || {}) };
+  const brand: Branding = options ? brandForPrint(saved, options) : saved;
+  const showMark = !options || options.logo;
+  const logo = showMark ? business.logo_url || brand.logo : null;
+  const kind = options?.kind || 'auto';
+  // A delivery challan lists the goods only; an estimate is not a bill to be paid
+  const challan = kind === 'challan';
+  const estimate = kind === 'estimate';
   const accent = brand.color;
   const ink = shade(accent, 0.25);
   const items = invoice.items || [];
@@ -68,7 +78,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
   const balanceDue = inv.status === 'ISSUED' ? Math.max(0, invoice.total_paise - invoice.amount_paid_paise) : 0;
   const hasDiscount = items.some((it) => it.discount_paise > 0);
   const taxableOf = (it: any) => it.taxable_paise || it.total_paise - it.tax_paise;
-  const title = business.gstin ? 'Tax Invoice' : 'Invoice';
+  const title = docTitle(kind, !!business.gstin);
   const address = [business.address, business.city, business.state, business.pincode].filter(Boolean).join(', ');
   const bank = brand.showBank && brand.bankAccountNumber ? brand : null;
   const stamped = brand.stampMode !== 'off' && !cancelled;
@@ -92,7 +102,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
   const taxRows = [...byRate.entries()].filter(([rate]) => rate > 0).sort((a, b) => a[0] - b[0]);
   const totalQty = items.reduce((s, it) => s + Number(it.quantity || 0), 0);
   // "Scan to pay" only while money is due on the bill, for exactly that amount
-  const upiDue = brand.showUpiQr && brand.upiId && !cancelled ? balanceDue : 0;
+  const upiDue = brand.showUpiQr && brand.upiId && !cancelled && !challan && !estimate ? balanceDue : 0;
 
   return (
     <div className="print-area relative bg-white text-slate-800 w-full rounded-lg shadow-md border border-slate-200 font-sans text-[11.5px] leading-snug select-text overflow-hidden">
@@ -117,7 +127,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
           <div className="flex gap-3.5 min-w-0">
             {logo ? (
               <img src={logo} alt="" className="max-w-[120px] h-16 object-contain shrink-0" />
-            ) : (
+            ) : !showMark ? null : (
               <div className="w-14 h-14 rounded-xl text-white flex items-center justify-center text-xl font-black shrink-0" style={{ background: accent }}>
                 {initials}
               </div>
@@ -136,7 +146,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
           </div>
           <div className="text-right shrink-0">
             <div className="text-[26px] font-black uppercase tracking-[0.08em] leading-none" style={{ color: ink }}>{title}</div>
-            <div className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-slate-400 mt-1.5">Original for recipient</div>
+            <div className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-slate-400 mt-1.5">{copy ?? 'Original for recipient'}</div>
             {/* The bill number as a barcode: scan it in Returns or Invoices to find this bill */}
             {canEncode(invoice.invoice_number) && <BarcodeSvg value={invoice.invoice_number} className="ml-auto mt-2 h-8 w-40" />}
           </div>
@@ -145,10 +155,11 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
         {/* Invoice facts */}
         <div className="mt-6 grid grid-cols-4 rounded-xl border border-slate-200 bg-slate-50 divide-x divide-slate-200">
           {[
-            ['Invoice No.', invoice.invoice_number],
-            ['Invoice Date', formatDate(invoice.invoice_date)],
+            [challan ? 'Challan No.' : estimate ? 'Estimate No.' : 'Invoice No.', invoice.invoice_number],
+            ['Date', formatDate(invoice.invoice_date)],
             ['Place of Supply', inv.place_of_supply || business.state || '—'],
-            inv.due_date && balanceDue > 0 ? ['Due Date', formatDate(inv.due_date)] : ['Payment Mode', invoice.payment_mode],
+            challan || estimate ? ['Items', String(items.length)]
+              : inv.due_date && balanceDue > 0 ? ['Due Date', formatDate(inv.due_date)] : ['Payment Mode', invoice.payment_mode],
           ].map(([k, v]) => (
             <div key={k} className="px-4 py-2.5">
               <Label>{k}</Label>
@@ -158,9 +169,9 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
         </div>
 
         {/* Buyer and payment */}
-        <div className="mt-4 grid grid-cols-2 gap-4">
+        <div className={`mt-4 grid gap-4 ${challan || estimate ? 'grid-cols-1' : 'grid-cols-2'}`}>
           <div className="rounded-xl border border-slate-200 px-4 py-3">
-            <Label>Bill To</Label>
+            <Label>{challan ? 'Deliver To' : 'Bill To'}</Label>
             <div className="text-[14px] font-bold text-slate-900">{invoice.customer_name}</div>
             {inv.billing_address && <p className="text-slate-500 mt-0.5 whitespace-pre-line">{inv.billing_address}</p>}
             {invoice.customer_phone && <p className="text-slate-500 mt-0.5">Ph: {invoice.customer_phone}</p>}
@@ -172,7 +183,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
               </div>
             )}
           </div>
-          <div className="rounded-xl border border-slate-200 px-4 py-3">
+          {!challan && !estimate && <div className="rounded-xl border border-slate-200 px-4 py-3">
             <div className="flex items-start justify-between">
               <Label>Payment</Label>
               <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-bold ring-1 ring-inset ${STATUS_TONE[invoice.payment_status] || STATUS_TONE.UNPAID}`}>
@@ -186,7 +197,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
                 <div className="flex justify-between"><span className="text-slate-500">Balance due</span><span className="font-bold text-rose-600">{formatINR(balanceDue)}</span></div>
               )}
             </div>
-          </div>
+          </div>}
         </div>
 
         {/* Items */}
@@ -197,12 +208,14 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
                 <th className="py-2.5 pl-4 pr-2 w-8 font-semibold">#</th>
                 <th className="py-2.5 px-2 font-semibold">Item</th>
                 <th className="py-2.5 px-2 font-semibold text-center">HSN/SAC</th>
-                <th className="py-2.5 px-2 font-semibold text-right">Qty</th>
-                <th className="py-2.5 px-2 font-semibold text-right">Rate{inv.prices_include_tax ? '*' : ''}</th>
-                {hasDiscount && <th className="py-2.5 px-2 font-semibold text-right">Disc.</th>}
-                <th className="py-2.5 px-2 font-semibold text-right">Taxable</th>
-                <th className="py-2.5 px-2 font-semibold text-right">GST</th>
-                <th className="py-2.5 pl-2 pr-4 font-semibold text-right">Amount</th>
+                <th className={`py-2.5 font-semibold text-right ${challan ? 'pl-2 pr-4' : 'px-2'}`}>Qty</th>
+                {!challan && <>
+                  <th className="py-2.5 px-2 font-semibold text-right">Rate{inv.prices_include_tax ? '*' : ''}</th>
+                  {hasDiscount && <th className="py-2.5 px-2 font-semibold text-right">Disc.</th>}
+                  <th className="py-2.5 px-2 font-semibold text-right">Taxable</th>
+                  <th className="py-2.5 px-2 font-semibold text-right">GST</th>
+                  <th className="py-2.5 pl-2 pr-4 font-semibold text-right">Amount</th>
+                </>}
               </tr>
             </thead>
             <tbody>
@@ -214,9 +227,10 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
                     {it.sku && <div className="text-[9.5px] text-slate-400 font-mono">{it.sku}</div>}
                   </td>
                   <td className="py-2.5 px-2 text-center font-mono text-[10.5px] text-slate-500">{it.hsn_code || '—'}</td>
-                  <td className="py-2.5 px-2 text-right font-semibold whitespace-nowrap">
+                  <td className={`py-2.5 text-right font-semibold whitespace-nowrap ${challan ? 'pl-2 pr-4' : 'px-2'}`}>
                     {it.quantity}{it.unit ? <span className="font-normal text-slate-400 text-[10px]"> {it.unit}</span> : null}
                   </td>
+                  {!challan && <>
                   <td className="py-2.5 px-2 text-right whitespace-nowrap">{formatINR(it.unit_price_paise)}</td>
                   {hasDiscount && <td className="py-2.5 px-2 text-right whitespace-nowrap text-emerald-700">{it.discount_paise ? `−${formatINR(it.discount_paise)}` : '—'}</td>}
                   <td className="py-2.5 px-2 text-right whitespace-nowrap">{formatINR(taxableOf(it))}</td>
@@ -225,21 +239,34 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
                     <div className="text-[9.5px] text-slate-400">@ {it.tax_rate}%</div>
                   </td>
                   <td className="py-2.5 pl-2 pr-4 text-right font-bold text-slate-900 whitespace-nowrap">{formatINR(it.total_paise)}</td>
+                  </>}
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="border-t border-slate-200 bg-slate-50 font-semibold text-slate-600">
                 <td className="py-2 pl-4 pr-2" colSpan={3}>{items.length} item{items.length === 1 ? '' : 's'}</td>
-                <td className="py-2 px-2 text-right">{Number(totalQty.toFixed(3))}</td>
-                <td colSpan={hasDiscount ? 5 : 4} />
+                <td className={`py-2 text-right ${challan ? 'pl-2 pr-4' : 'px-2'}`}>{Number(totalQty.toFixed(3))}</td>
+                {!challan && <td colSpan={hasDiscount ? 5 : 4} />}
               </tr>
             </tfoot>
           </table>
         </div>
         {inv.prices_include_tax ? <p className="mt-1.5 text-[9.5px] text-slate-400">* Rates include GST.</p> : null}
 
-        {/* Words, GST summary, totals */}
+        {/* Words, GST summary, totals (a challan lists goods only) */}
+        {challan ? (
+          <div className="mt-5 grid grid-cols-2 gap-6 items-start">
+            <div>
+              <Label>Terms &amp; conditions</Label>
+              <p className="text-slate-500 text-[10.5px] whitespace-pre-line">{invoice.notes || 'Goods sent as listed above. Please check them on delivery.'}</p>
+            </div>
+            <div className="rounded-xl border border-slate-200 px-4 pt-3 pb-2 text-center">
+              <div className="h-12" />
+              <div className="border-t border-slate-300 pt-1 text-[10px] text-slate-500">Received the goods in good condition (name, signature, date)</div>
+            </div>
+          </div>
+        ) : (
         <div className="mt-5 grid grid-cols-[1fr_270px] gap-6 items-start">
           <div className="space-y-4">
             <div>
@@ -282,7 +309,7 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
             )}
 
             {(bank || upiDue > 0) && (
-              <div className="flex gap-4 items-start rounded-xl border border-slate-200 px-4 py-3">
+              <div className={`flex gap-4 rounded-xl border border-slate-200 px-4 py-3 ${compact ? 'flex-col' : 'items-start'}`}>
                 {bank && (
                   <div className="flex-1 min-w-0">
                     <Label>Bank details</Label>
@@ -344,19 +371,22 @@ export const A4Invoice: React.FC<{ invoice: Invoice }> = ({ invoice }) => {
               <span className="font-semibold text-[12px]">Total</span>
               <span className="text-[19px] font-black tracking-tight">{formatINR(invoice.total_paise)}</span>
             </div>
-            {balanceDue > 0 && (
+            {balanceDue > 0 && !estimate && (
               <div className="flex justify-between px-4 py-2 bg-rose-50 text-rose-700 font-bold">
                 <span>Balance due</span><span>{formatINR(balanceDue)}</span>
               </div>
             )}
           </div>
         </div>
+        )}
 
         {/* Thanks and signature */}
         <div className="mt-8 flex justify-between items-end gap-6">
           <div>
             <p className="text-[14px] font-bold" style={{ color: ink }}>{inv.footer || 'Thank you for your business!'}</p>
-            <p className="text-[9.5px] text-slate-400 mt-1">E. &amp; O.E. · This is a computer-generated invoice.</p>
+            <p className="text-[9.5px] text-slate-400 mt-1">
+              {estimate ? 'This is an estimate, not a tax invoice. Prices may change.' : 'E. & O.E. · This is a computer-generated document.'}
+            </p>
           </div>
           <div className="relative text-center w-52 shrink-0">
             {/* The stamp pressed beside the signature, partly over it (as a real one would be) */}

@@ -28,7 +28,7 @@ syncEvents.setMaxListeners(100);
 
 /** Tables about this computer itself (licence, backups made here, printer, …): never shared */
 const LOCAL_TABLES = new Set(['schema_migrations', 'license_state', 'account_sync', 'backup_history', 'feature_usage',
-  'hardware_settings', 'system_settings', 'plans']);
+  'hardware_settings', 'system_settings', 'plans', 'sales_rollup']);
 /** Counters: shared as changes, never as values */
 export const COUNTERS: Record<string, string[]> = {
   products: ['stock_quantity'],
@@ -481,7 +481,8 @@ function repoint(kind: 'businesses' | 'users', from: string, to: string) {
   const d = currentShop().db;
   const all = d.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'sync_%'").pluck().all() as string[];
   for (const name of all) {
-    if (!/^[a-z][a-z0-9_]*$/.test(name)) continue;
+    // the sales summary follows its bills (their triggers move it)
+    if (!/^[a-z][a-z0-9_]*$/.test(name) || name === 'sales_rollup') continue;
     const cols = new Set((d.prepare(`PRAGMA table_info("${name}")`).all() as Array<{ name: string }>).map((c) => c.name));
     const refs = new Set((d.prepare(`PRAGMA foreign_key_list("${name}")`).all() as Array<{ table: string; from: string }>)
       .filter((f) => f.table === kind).map((f) => f.from));

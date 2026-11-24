@@ -15,6 +15,7 @@ import { createBackup } from '../services/backupService.js';
 import { allShopIds, currentShop, currentShopId, runInShop } from '../db/shops.js';
 import bcrypt from 'bcryptjs';
 import { afterErase, quietly, requestSync } from '../sync/syncEngine.js';
+import { loadServerAddress, noteServerReachable, noteServerUnreachable } from './serverAddress.js';
 
 export type LicenseMode =
   | 'DISABLED' // enforcement off (development only)
@@ -50,6 +51,8 @@ export function __setPublicKeyForTests(pem: string) {
   if (process.env.NODE_ENV !== 'test') throw new Error('Not allowed');
   publicKeyPem = pem;
 }
+// The vendor's server moved after a rebuild: the address followed earlier (signed by the vendor) is used
+loadServerAddress(publicKeyPem);
 
 interface StateRow {
   installation_id: string | null;
@@ -408,8 +411,11 @@ async function call(path: string, body: unknown, auth?: { id: string; secret: st
       signal: controller.signal,
     });
     const data = await res.json().catch(() => ({}));
+    noteServerReachable();
     return { status: res.status, data };
   } catch (err: any) {
+    // Unreachable for a while: the vendor may have rebuilt its server elsewhere (serverAddress.ts)
+    noteServerUnreachable(publicKeyPem);
     throw new HttpError(503, 'LICENSE_SERVER_UNREACHABLE',
       err?.name === 'AbortError' ? 'License server did not respond in time' : 'Could not reach the license server. Check your internet connection.');
   } finally {

@@ -4,6 +4,8 @@ import crypto from 'crypto';
 import { AsyncLocalStorage, AsyncResource } from 'async_hooks';
 import { config } from '../config/index.js';
 import { runMigrations } from './migrations.js';
+import { repairRecentSales } from './salesSummary.js';
+import { sha256File } from '../lib/fileHash.js';
 import { databaseKey, ensureDatabaseEncrypted, openDatabase, SqliteDatabase } from './sqlite.js';
 
 /**
@@ -78,6 +80,25 @@ function loadRegistry() {
   if (!registry.shops.some((s) => s.id === registry.active)) registry.active = MAIN;
 }
 
+/**
+ * Keeps SQLite's planner statistics current: when a business is opened (only tables that changed enough are looked at
+ * again) and every 6 hours while the app runs. analysis_limit samples each index instead of reading all of it, so this
+ * takes milliseconds even for a shop with a million bills.
+ */
+function keepStatistics(db: ReturnType<typeof openDatabase>): void {
+  try {
+    db.pragma('analysis_limit = 400');
+    db.pragma('optimize = 0x10002');
+  } catch (err) {
+    console.warn('[Database] planner statistics not updated', err);
+  }
+}
+setInterval(() => {
+  for (const h of handles.values()) {
+    try { h.db.pragma('optimize'); } catch { /* closed meanwhile */ }
+  }
+}, 6 * 3600_000).unref();
+
 /** Opens (once) the database of a business: encrypted, migrated to the current version */
 export function openShop(id: string): ShopHandle {
   const open = handles.get(id);
@@ -97,7 +118,7 @@ export function openShop(id: string): ShopHandle {
     backupDir: p.backupDir,
     onBackup: (filePath, fromVersion) => {
       const stat = fs.statSync(filePath);
-      const sha256 = crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+      const sha256 = sha256File(filePath);
       db.prepare(`
         INSERT INTO backup_history (id, file_name, file_path, size_bytes, sha256, kind, status, schema_version, notes)
         VALUES (?, ?, ?, ?, ?, 'PRE_MIGRATION', 'OK', ?, ?)
@@ -105,6 +126,11 @@ export function openShop(id: string): ShopHandle {
         `Automatic backup before upgrading schema from v${fromVersion}`);
     },
   });
+  // Statistics for the query planner, kept current: without them SQLite can pick the wrong index on a big shop (a
+  // customer's bills read through every bill). Cheap: each index is sampled, not read in full.
+  keepStatistics(db);
+  // The last few days of the sales summary built again from the bills (see db/salesSummary.ts)
+  try { repairRecentSales(db); } catch (err) { console.warn('[Database] sales summary not checked', err); }
   openHook?.(db);
   console.log(`[Database] SQLite ready at ${p.dbPath} (schema v${result.to}${databaseKey() ? ', encrypted' : ''})`);
   const handle: ShopHandle = { id, db, ...p };

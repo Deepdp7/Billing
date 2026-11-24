@@ -105,6 +105,11 @@ export const ReportExplorer: React.FC<{ fromDate: string; toDate: string }> = ({
             <h3 className="font-bold text-sm text-slate-900 dark:text-white">{data.title}</h3>
             <span className="text-[11px] text-slate-400">{fromDate || 'beginning'} → {toDate || 'today'}</span>
           </div>
+          {data.totalRows > data.rows.length && (
+            <p className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              Showing the first {data.rows.length.toLocaleString('en-IN')} of {Number(data.totalRows).toLocaleString('en-IN')} rows. Export it for the whole report (the totals above are for all of it).
+            </p>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>

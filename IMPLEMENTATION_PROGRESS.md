@@ -666,3 +666,53 @@ Checks
   The `will-change` hint that moved from one clip to the next at the switch (rebuilding the layers mid-fade) is gone,
   and the headline's blurred drop-shadow filter is a plain text-shadow (no filter layer over the moving video).
   Sign-in checks 19/19, incl. "no clip ever runs out at a switch: 12 starts, 0 ended".
+
+## Print options for every bill: paper, kind of document, logo, signature, stamp, watermark, copies (2026-11-24)
+
+- The print window (POS billing, Invoices, Dashboard: components/billing/InvoiceModal.tsx) has a panel beside the
+  preview: paper 80 mm / 58 mm receipt, A5 or A4; document: automatic, tax invoice, bill of supply, cash memo,
+  estimate, delivery challan (goods and quantities only, a "received" line); on the bill: logo, authorised signature,
+  "scan to pay" UPI code, bank details; stamp: none / round seal / the stamp picture, by the signature or as a
+  watermark; 1-3 copies (original / duplicate / triplicate; on receipts customer / shop / office copy). Choices that
+  need something not uploaded or set up are greyed out and say where to set it up. It starts from the shop's settings
+  (Logo & Branding) and the kind of business (grocery, restaurant, clothing: 80 mm; pharmacy, school: A5; wholesale,
+  manufacturing: A4 in two copies; services: A4), and the last choice is remembered on that computer (each counter has
+  its own printer); "Back to shop settings" resets it. lib/printOptions.ts holds the rules. PDF names follow the
+  document (Tax-Invoice-DES-1001.pdf, Delivery-Challan-…).
+- Checked in headless Edge with a real bill (12/12): 80 mm with seal and UPI, A4 with bank details and signature,
+  watermark + 2 copies, challan without prices, A5 (bank details stacked on the half page), 58 mm without stamp, the
+  choice remembered and reset.
+
+## Shopping-mall scale: measured and fixed (2026-11-24)
+
+- scripts/perf-bench.ts builds an encrypted shop of 100,000 products, 50,000 customers and 1,000,000 bills (3 million
+  lines, 3.2 GB) and times every heavy request (`npx tsx scripts/perf-bench.ts [--scale 0.1] [--keep dir] [--profile]`).
+- Fixed after measuring: indexes for the newest-first lists, stock history, a customer's bills and payments (partial
+  indexes that leave out walk-in sales: with most bills walk-in an index over all of them looked useless to SQLite),
+  products in name order and by code ignoring case, low stock; planner statistics kept current (PRAGMA optimize at
+  opening and every 6 h); the dashboard reads the last 30 days, not every bill ever made; lists are not counted on every
+  page (searches not at all, plain lists up to 10,000: lib/paging.ts); a bill number typed or scanned in full is found by
+  its index first; report screens show the first 1,000 rows (Export has all, totals are for all).
+- The day's sales per product (db/salesSummary.ts, migration v7): kept by triggers on bills and lines (issued only;
+  drafts, edits, cancels, deletes, re-dating and sync's lines-before-bill all handled), never synced, the last 3 days
+  rebuilt at every opening; the dashboard, profit & loss, GST summary and the product and HSN reports read it. A test
+  changes bills every way and checks it equals the bills and rebuilds to the same.
+- A big shop's first start after this update upgrades its data once (safety copy, indexes, summary): the engine says
+  APNA_UPGRADING and the shell waits up to 30 minutes instead of reporting a failed start after 60 s.
+
+## The central server: off-server backups and recovery (2026-11-24)
+
+- Admin app → System → Backups & Recovery (owner): set a recovery password once; the app makes a backup when it opens
+  and every 3 hours while open, into Documents\Winteg Wave Backups (24 newest, then one a day for 60 days), with a menu
+  dot when the newest is over a day old. The server encrypts each backup to the owner's key (ECDH P-256 + HKDF +
+  AES-256-GCM, SuperAdmin server/src/backup.ts); the private key is locked with the recovery password (PBKDF2 600k) in
+  recovery-key.json beside the backups, so the folder can be copied anywhere. Inside: the database, the licence-signing
+  key, TLS certificate and key, settings, and the TLS CA key (root-only on the VPS: Upload encrypts it to the backup key).
+- `python deploy/apna_vps.py restore` rebuilds the server on a new VPS from the newest backup with the same keys (a new
+  certificate for the new address from the same CA, so installed apps trust it), and `publish-address` signs "the server
+  is now at …" (deploy/servers.json + .sig, Ed25519 with the licence key). Installed apps that cannot reach their server
+  for 10 minutes read it from GitHub (and a CDN copy), check the signature and follow it (licensing/serverAddress.ts);
+  the update check follows it too. The VPS also keeps hourly copies (2 days) besides the nightly ones (30 days).
+- Tested: backup round trip (server test), WebCrypto key + Python-sealed CA key + Node backup opened by the Python
+  restore tool with only the password, wrong password refused; address following (newer signed only, tampered and
+  older refused, kept across restarts); the published address verified against the key built into the apps.

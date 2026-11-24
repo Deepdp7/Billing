@@ -91,6 +91,17 @@ fn verify_engine(dir: &Path) -> Result<(), String> {
 /// Where activation/licence checks go. Release builds use the URL compiled in (LICENSE_SERVER_URL at build time);
 /// only debug builds honour a runtime override.
 fn license_server_url() -> String {
+    // The vendor's server was rebuilt elsewhere: the engine checked the signed new address and kept it here
+    if let Some(url) = std::fs::read_to_string(data_dir().join("server-address.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("doc").and_then(|d| d.as_str()).map(str::to_string))
+        .and_then(|doc| serde_json::from_str::<serde_json::Value>(&doc).ok())
+        .and_then(|d| d.get("url").and_then(|u| u.as_str()).map(str::to_string))
+        .filter(|u| u.starts_with("https://"))
+    {
+        return url;
+    }
     if cfg!(debug_assertions) {
         if let Ok(v) = std::env::var("APNA_LICENSE_SERVER_URL") {
             if !v.trim().is_empty() {
@@ -261,23 +272,37 @@ fn start_engine(uninstall: bool) -> Result<(Child, u16), String> {
         });
     }
     let stdout = child.stdout.take().ok_or("no stdout")?;
-    let (tx, rx) = mpsc::channel::<u16>();
+    // Some(port) when it answers; None when it says it is upgrading the shop's data (once, after an update)
+    let (tx, rx) = mpsc::channel::<Option<u16>>();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             println!("[engine] {line}");
             if line.starts_with("APNA_UNINSTALLED=") {
-                let _ = tx.send(0);
+                let _ = tx.send(Some(0));
+            }
+            if line.trim() == "APNA_UPGRADING" {
+                splash::trace("engine upgrading the data");
+                let _ = tx.send(None);
             }
             if let Some(p) = line.strip_prefix("APNA_PORT=") {
                 if let Ok(port) = p.trim().parse::<u16>() {
                     splash::trace("engine answers");
-                    let _ = tx.send(port);
+                    let _ = tx.send(Some(port));
                 }
             }
         }
     });
-    // Disconnected (the engine exited) ends the wait at once; otherwise give it a minute.
-    match rx.recv_timeout(Duration::from_secs(60)) {
+    // Disconnected (the engine exited) ends the wait at once; otherwise a minute, or, while it upgrades a shop's data
+    // after an update (a big shop: a few minutes on a slow disk), half an hour.
+    let mut deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let answer = loop {
+        match rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+            Ok(None) => deadline = std::time::Instant::now() + Duration::from_secs(30 * 60),
+            Ok(Some(port)) => break Ok(port),
+            Err(e) => break Err(e),
+        }
+    };
+    match answer {
         Ok(port) => Ok((child, port)),
         Err(e) => {
             let _ = child.kill();
@@ -285,7 +310,7 @@ fn start_engine(uninstall: bool) -> Result<(Child, u16), String> {
             std::thread::sleep(Duration::from_millis(200)); // let the error reader drain
             let detail = errors.lock().unwrap().join("\n");
             let what = match e {
-                mpsc::RecvTimeoutError::Timeout => "The local engine did not start within 60 seconds.",
+                mpsc::RecvTimeoutError::Timeout => "The local engine did not start in time.",
                 mpsc::RecvTimeoutError::Disconnected => "The local engine stopped while starting.",
             };
             Err(if detail.is_empty() { what.to_string() } else { format!("{what}\n\n{detail}") })
@@ -565,8 +590,9 @@ pub fn run() {
                     // Also waits for the window: its start page has loaded once this returns
                     let started = match (failed, pending) {
                         (Some(msg), _) => Err(msg),
-                        (None, Some(rx)) => rx.recv_timeout(Duration::from_secs(60)).unwrap_or_else(|_| {
-                            Err("The local engine did not start within 60 seconds.".to_string())
+                        // the engine's own start has its time limits (start_engine): this only guards against a hang
+                        (None, Some(rx)) => rx.recv_timeout(Duration::from_secs(35 * 60)).unwrap_or_else(|_| {
+                            Err("The local engine did not start in time.".to_string())
                         }),
                         (None, None) => unreachable!(),
                     };
