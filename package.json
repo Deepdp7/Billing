@@ -1,6 +1,6 @@
 {
   "name": "apna-billing",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Apna Billing - All-in-one business billing & management platform",
   "scripts": {
