@@ -682,17 +682,19 @@ export async function offerUpdateWithoutLicence() {
   if (!unlicensed.length) return;
   let latest = '';
   let notes = '';
+  let rollback = false; // the vendor put an older version live on purpose: everyone on another version goes back to it
   try {
     const res = await fetch(`${config.licensing.serverUrl}/updates/latest.json`, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return;
-    const m = await res.json() as { version?: unknown; notes?: unknown };
+    const m = await res.json() as { version?: unknown; notes?: unknown; rollback?: unknown };
     latest = String(m.version || '');
     notes = typeof m.notes === 'string' ? m.notes.trim() : '';
+    rollback = m.rollback === true;
   } catch {
     return; // offline: asked again later
   }
   if (!/^\d+\.\d+\.\d+(\+\d+)?$/.test(latest)) return;
-  const offer = olderVersion(APP_VERSION, latest)
+  const offer = latest !== APP_VERSION && (olderVersion(APP_VERSION, latest) || rollback)
     ? JSON.stringify({ latestVersion: latest, message: notes || `Version ${latest} is available.`, mandatory: false })
     : null;
   for (const id of unlicensed) {

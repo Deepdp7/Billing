@@ -192,6 +192,18 @@ shows the popup, and **Install now** puts the older version back. Each computer 
 2. The confirmation says it is a rollback. Type your password and press **Roll back all clients**.
 3. **Live now** shows the older version with **ROLLED_BACK**. Publishing a newer version later ends the rollback.
 
+Who gets the popup, and when (checked end to end with a real licence server and real apps):
+
+- **An app that is open and signed in**: the popup appears within about a second of pressing the button (the server
+  pushes it over the live link). It is the same popup as for a new version: "Update available · Version 1.0.0 · you
+  have 1.0.1", with **Install now** and **Later**. If you ticked *Required*, it says "Update required" and cannot be
+  skipped.
+- **A computer that was switched off** (or offline): the popup appears when it starts and signs in. **Later** only
+  hides it until the app is opened again.
+- **A computer that has not started a trial or entered a key yet**: it is offered the older version too, when the app
+  starts (and every few hours).
+- **A computer already on that version** gets nothing.
+
 Only roll back if the newer version did not change the database (new tables or columns): the older version may not
 work with them. Rollback needs apps from version 1.0.2 on (older apps only accept newer versions).
 

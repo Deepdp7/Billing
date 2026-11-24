@@ -529,3 +529,18 @@ Checks
     still at the loop point; a paused or frozen player recovers by itself; reduce-motion, blocked video and nothing
     loading at all all give a working screen. Headless Edge has no real graphics chip, so no real frame-time numbers
     are claimed: the black screen could not be reproduced there, only designed out.
+
+## Rollback reaches every computer (2026-11-25)
+
+- Rollback already existed (Updates & Releases -> History -> "Roll back to this"; the server offers the live older version
+  to every computer on a different version; the shell's updater uses `version_comparator(remote != current)`). Proven end
+  to end with a real SuperAdmin licence server + real engines + a browser (15 checks): an open signed-in app shows the
+  normal "Update available / Version 1.0.0 - you have 1.0.1" popup 0.3 s after the admin presses the button; a required
+  rollback shows "Update required" without Later; a computer that was switched off gets it when it starts; a computer
+  already on that version gets nothing.
+- Fixed: a computer with no licence yet (it reads `/updates/latest.json` itself) only accepted NEWER versions, so a
+  rollback never reached it. The server now writes `rollback: true/false` into latest.json (Tauri's updater ignores
+  unknown fields: checked in tauri-plugin-updater 2.14.1), and `offerUpdateWithoutLicence` offers any different version
+  when it is true. Tests: SuperAdmin `updates.test.ts` (flag on rollback, cleared by a newer publish), engine 101/101.
+- Needs the licence server uploaded to the VPS (Upload Admin Panel and licence server) and the new client build.
+  Apps built before 15 Nov (no "+N" in the version) only accept newer versions and cannot be rolled back.
