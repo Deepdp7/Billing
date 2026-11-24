@@ -506,11 +506,26 @@ Checks
 - Verified on the real sealed engine started like the shell does: 22 browser checks, byte-for-byte equal output to the
   original through the engine, ffprobe reads it over HTTP; engine tests 101/101 (new `test/loginMedia.test.ts`: every
   kind of byte range incl. 60 random ones, wrong/no key, odd names).
-- **Smoother (2026-11-25)**: clips are 1080p **30 fps** for every computer (no 720p copies; 12 MB in all). 24 fps on a
-  60 Hz screen is shown 3-2-3-2 refreshes per frame, which stutters on slow camera moves; 30 fps is shown 2-2 (even).
-  The extra frames are motion-interpolated (`minterpolate`, checked on the fastest motion: the kurta, the waiter),
-  never repeated. The sign-in card is solid (94 % / 90 %), not frosted glass: a blur over moving video is redrawn for
-  every video frame, the costliest effect for a weak graphics chip. Only the current poster sits under the videos, one
-  darkening layer instead of two, no seek when a freshly loaded clip starts (a decoder restart), progress bars updated
-  4x a second and glided by the graphics chip. Verified: 24 browser checks on the sealed engine incl. 30 fps playback
-  and no blur. (Headless Edge has no real graphics chip, so no frame-time numbers are claimed.)
+- **Rebuilt as one looping video (2026-11-25)**: the two-player design above (two `<video>` elements swapped with a
+  fade, the next clip loaded ahead) is gone. The owner saw black screens, a frozen picture and uneven clip changes on a
+  real PC: a hand-over between two players can stall (the next one waits for data while the old one has ended) or show
+  nothing (on some graphics chips a video fading in and out loses its hardware overlay). Now:
+  - `scripts/encode-login-videos.mjs` makes ONE file, `login.<hash>.mp4` (1080p, 30 fps, H.264 high, BT.709, 28.67 s =
+    860 frames, ~12 MB): the 4 clips one after another with 0.8 s (24 frame) dissolves, each shop owning 7.17 s, cut from
+    the middle of the dissolve "last shop into first" to the middle of the same dissolve one lap later, so the file
+    loops with no visible join (measured: the picture difference across the join is the same as between any two
+    neighbouring frames). 24 -> 30 fps by motion interpolation (a 60 Hz screen shows 30 fps frames twice each: even; 24
+    fps would be 3-2-3-2). Per-clip touch-ups and the 4 posters (each shop's first clean picture, which is also where
+    the video starts) are made from the same masters. No 720p copy.
+  - `VideoBackdrop.tsx`: one `<video>` (muted, loop), no fades or blur on top of it, one poster under it, a fixed
+    darkening layer, a dark-green gradient under everything (never plain black). The words and bars follow the video's
+    own clock (`currentTime`, 4x a second), so they cannot drift from the picture. A watchdog (1 s) restarts a picture
+    that is paused or whose clock stands still (3 s) from where it was, at most 3 times a minute, then falls back to the
+    posters. Hidden/minimised pauses it. Pressing a bar seeks to that shop's clean picture.
+  - The sign-in card is solid (94 % / 90 %), no frosted glass (a blur over moving video is redrawn for every frame).
+  - Verified on the real sealed engine in headless Edge, 25 checks: starts playing at once at 1080p / 30 fps from the
+    first shop's picture; never black or frozen over 62 s (2 laps; brightness of the decoded picture sampled every
+    second); the words change in the right order within 0.3 s of the video reaching each shop; the clock never stands
+    still at the loop point; a paused or frozen player recovers by itself; reduce-motion, blocked video and nothing
+    loading at all all give a working screen. Headless Edge has no real graphics chip, so no real frame-time numbers
+    are claimed: the black screen could not be reproduced there, only designed out.
